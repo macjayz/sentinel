@@ -6,6 +6,8 @@ Sentinel monitors REST, GraphQL, WebSocket, webhook, and EVM JSON-RPC traffic th
 
 ![Sentinel dashboard overview](assets/screenshots/dashboard-overview.png)
 
+![Sentinel request explorer](assets/screenshots/request-explorer.png)
+
 ## MVP Scope
 
 Sentinel v0 targets:
@@ -126,6 +128,7 @@ Operational endpoints:
 - `GET /ready`: database and queue readiness
 - `GET /metrics`: Prometheus-style Sentinel runtime metrics
 - `GET /v1/analytics/system`: JSON system metrics for the dashboard
+- `GET /v1/analytics/requests`: recent request explorer data with method, status, IP, path, and threat filters
 
 ## Example SDK Usage
 

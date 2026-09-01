@@ -4,7 +4,8 @@ import { buildServer } from "./server.js";
 vi.mock("./db.js", () => ({
   createPool: () => ({ end: vi.fn() }),
   getOverview: () => ({ totals: { events: 0, openIncidents: 0, averageLatencyMs: 0 }, endpoints: [], ips: [] }),
-  getIncidents: () => []
+  getIncidents: () => [],
+  getRequests: () => []
 }));
 
 vi.mock("./queue.js", () => ({
@@ -38,6 +39,15 @@ describe("api server", () => {
     const response = await app.inject({ method: "GET", url: "/health" });
 
     expect(response.headers["x-request-id"]).toBeTypeOf("string");
+    await app.close();
+  });
+
+  it("exposes request explorer data without sdk authentication", async () => {
+    const { app } = await buildServer();
+    const response = await app.inject({ method: "GET", url: "/v1/analytics/requests?limit=10" });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual([]);
     await app.close();
   });
 });

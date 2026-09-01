@@ -10,6 +10,7 @@
 - Dashboard overview
 - Docker Compose self-hosting
 - Health, readiness, and runtime metrics
+- Request explorer with method, status, IP, path, and threat filters
 
 ## v0.2 Product Hardening
 

@@ -50,15 +50,25 @@ nav {
   gap: 6px;
 }
 
-nav a {
+nav button {
+  background: transparent;
+  border: 0;
   border-radius: 8px;
   color: #aab7c4;
+  cursor: pointer;
+  font: inherit;
   padding: 10px 12px;
+  text-align: left;
 }
 
-nav a.active {
+nav button.active {
   background: #25313d;
   color: #ffffff;
+}
+
+nav button.disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
 }
 
 .workspace {
@@ -228,6 +238,88 @@ th {
   gap: 10px;
 }
 
+.filters {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 1.5fr 160px repeat(3, minmax(110px, 1fr)) 42px;
+  margin-bottom: 16px;
+}
+
+.filters label {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+}
+
+.filters input,
+.filters select {
+  background: #ffffff;
+  border: 1px solid #d9e0e7;
+  border-radius: 8px;
+  color: #1c2430;
+  font: inherit;
+  height: 40px;
+  min-width: 0;
+  padding: 0 10px;
+  width: 100%;
+}
+
+.filters label input,
+.filters label select {
+  flex: 1;
+}
+
+.icon-button {
+  align-items: center;
+  background: #101820;
+  border: 0;
+  border-radius: 8px;
+  color: #ffffff;
+  cursor: pointer;
+  display: flex;
+  height: 40px;
+  justify-content: center;
+  width: 42px;
+}
+
+.request-table {
+  overflow-x: auto;
+}
+
+.request-table table {
+  min-width: 980px;
+}
+
+.request-table td strong,
+.request-table td span {
+  display: block;
+}
+
+.request-table td span {
+  color: #687789;
+  font-size: 12px;
+  margin-top: 2px;
+}
+
+.status-code {
+  border-radius: 999px;
+  display: inline-flex;
+  justify-content: center;
+  min-width: 46px;
+  padding: 4px 8px;
+}
+
+.status-code.s2xx {
+  background: #dff5ec;
+  color: #17633f;
+}
+
+.status-code.s4xx,
+.status-code.s5xx {
+  background: #ffe5e5;
+  color: #a51d1d;
+}
+
 .ip-row {
   align-items: center;
   display: grid;
@@ -310,7 +402,12 @@ time {
 
   .metrics,
   .system-strip,
+  .filters,
   .grid {
     grid-template-columns: 1fr;
+  }
+
+  .icon-button {
+    width: 100%;
   }
 }

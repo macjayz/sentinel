@@ -3,7 +3,7 @@ import rateLimit from "@fastify/rate-limit";
 import Fastify from "fastify";
 import { EventBatchSchema } from "@sentinel/shared";
 import { loadConfig } from "./config.js";
-import { createPool, getIncidents, getOverview } from "./db.js";
+import { createPool, getIncidents, getOverview, getRequests } from "./db.js";
 import { attachLiveServer } from "./live.js";
 import {
   buildMetricsSnapshot,
@@ -71,6 +71,25 @@ export async function buildServer() {
 
   app.get("/v1/analytics/overview", async () => getOverview(pool));
   app.get("/v1/analytics/incidents", async () => getIncidents(pool));
+  app.get("/v1/analytics/requests", async (request) => {
+    const query = request.query as {
+      method?: string;
+      status?: string;
+      threatMin?: string;
+      ip?: string;
+      q?: string;
+      limit?: string;
+    };
+
+    return getRequests(pool, {
+      method: query.method,
+      status: query.status ? Number(query.status) : undefined,
+      threatMin: query.threatMin ? Number(query.threatMin) : undefined,
+      ip: query.ip,
+      query: query.q,
+      limit: query.limit ? Number(query.limit) : undefined
+    });
+  });
   app.get("/v1/analytics/system", async () =>
     buildMetricsSnapshot(metrics, pool, redis, config.streamName, liveHub)
   );

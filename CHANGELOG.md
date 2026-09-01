@@ -17,4 +17,5 @@ Initial alpha release.
 - Added Docker Compose self-hosting configuration.
 - Added demo traffic seeding script.
 - Added health, readiness, runtime metrics, request IDs, and dashboard system status widgets.
+- Added request explorer API and dashboard view with filters.
 - Added CI, issue templates, contribution guide, security policy, roadmap, and dashboard screenshot.

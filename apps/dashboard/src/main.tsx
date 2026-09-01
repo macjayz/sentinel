@@ -5,9 +5,12 @@ import {
   AlertTriangle,
   Clock,
   Database,
+  Filter,
   Gauge,
   Globe2,
   Radio,
+  RefreshCcw,
+  Search,
   ShieldCheck
 } from "lucide-react";
 import "./styles.css";
@@ -61,11 +64,53 @@ type SystemMetrics = {
   websocketConnections: number;
 };
 
+type RequestRecord = {
+  id: string;
+  timestamp: string;
+  service_name: string;
+  environment: string;
+  kind: string;
+  method: string;
+  path: string;
+  route?: string;
+  ip?: string;
+  user_agent?: string;
+  status_code: number;
+  latency_ms: number;
+  body_bytes?: number;
+  auth_present: boolean;
+  auth_failed: boolean;
+  graphql_operation_name?: string;
+  graphql_operation_type?: string;
+  evm_rpc_method?: string;
+  threat_score: number;
+  threat_severity: string;
+};
+
+type RequestFilters = {
+  method: string;
+  status: string;
+  threatMin: string;
+  ip: string;
+  query: string;
+};
+
 const apiBase = import.meta.env.VITE_SENTINEL_API_URL ?? "http://localhost:8080";
 
 function App() {
+  const [activeView, setActiveView] = useState<"overview" | "requests" | "incidents">(
+    getInitialView()
+  );
   const [overview, setOverview] = useState<Overview | null>(null);
   const [incidents, setIncidents] = useState<Incident[]>([]);
+  const [requests, setRequests] = useState<RequestRecord[]>(demoRequests);
+  const [requestFilters, setRequestFilters] = useState<RequestFilters>({
+    method: "",
+    status: "",
+    threatMin: "",
+    ip: "",
+    query: ""
+  });
   const [readiness, setReadiness] = useState<Readiness>(demoReadiness);
   const [systemMetrics, setSystemMetrics] = useState<SystemMetrics>(demoSystemMetrics);
   const [liveStatus, setLiveStatus] = useState("Connecting");
@@ -93,18 +138,34 @@ function App() {
         setIncidents(await incidentResponse.json());
         setReadiness(await readinessResponse.json());
         setSystemMetrics(await systemResponse.json());
+        await loadRequests();
       } catch {
         setOverview(demoOverview);
         setIncidents(demoIncidents);
         setReadiness(demoReadiness);
         setSystemMetrics(demoSystemMetrics);
+        setRequests(filterDemoRequests(requestFilters));
       }
     }
 
     void load();
     const interval = window.setInterval(() => void load(), 15000);
     return () => window.clearInterval(interval);
-  }, []);
+  }, [requestFilters]);
+
+  async function loadRequests() {
+    const params = new URLSearchParams();
+    if (requestFilters.method) params.set("method", requestFilters.method);
+    if (requestFilters.status) params.set("status", requestFilters.status);
+    if (requestFilters.threatMin) params.set("threatMin", requestFilters.threatMin);
+    if (requestFilters.ip) params.set("ip", requestFilters.ip);
+    if (requestFilters.query) params.set("q", requestFilters.query);
+    params.set("limit", "50");
+
+    const response = await fetch(`${apiBase}/v1/analytics/requests?${params.toString()}`);
+    if (!response.ok) throw new Error("requests_unavailable");
+    setRequests(await response.json());
+  }
 
   useEffect(() => {
     const liveUrl = apiBase.replace(/^http/, "ws") + "/live";
@@ -122,6 +183,7 @@ function App() {
     const ipScores = overview?.ips.map((ip) => ip.max_threat_score) ?? [];
     return Math.max(0, ...endpointScores, ...ipScores);
   }, [overview]);
+  const header = getHeader(activeView);
 
   return (
     <main className="shell">
@@ -134,18 +196,26 @@ function App() {
           </div>
         </div>
         <nav>
-          <a className="active">Overview</a>
-          <a>Endpoints</a>
-          <a>Incidents</a>
-          <a>Sources</a>
+          <button className={activeView === "overview" ? "active" : ""} onClick={() => changeView("overview")}>
+            Overview
+          </button>
+          <button className={activeView === "requests" ? "active" : ""} onClick={() => changeView("requests")}>
+            Requests
+          </button>
+          <button className={activeView === "incidents" ? "active" : ""} onClick={() => changeView("incidents")}>
+            Incidents
+          </button>
+          <button className="disabled" disabled>
+            Sources
+          </button>
         </nav>
       </aside>
 
       <section className="workspace">
         <header className="topbar">
           <div>
-            <h1>Security Overview</h1>
-            <p>REST, GraphQL, and EVM JSON-RPC telemetry from monitored services.</p>
+            <h1>{header.title}</h1>
+            <p>{header.subtitle}</p>
           </div>
           <div className={`live-pill ${liveStatus.toLowerCase().replace(/\s+/g, "-")}`}>
             <Radio size={16} />
@@ -201,63 +271,72 @@ function App() {
           />
         </section>
 
-        <section className="grid">
-          <Panel title="Endpoint Discovery">
-            <table>
-              <thead>
-                <tr>
-                  <th>Method</th>
-                  <th>Path</th>
-                  <th>Requests</th>
-                  <th>Latency</th>
-                  <th>Threat</th>
-                </tr>
-              </thead>
-              <tbody>
-                {(overview?.endpoints ?? []).map((endpoint) => (
-                  <tr key={`${endpoint.method}:${endpoint.path}`}>
-                    <td>{endpoint.method}</td>
-                    <td>{endpoint.path}</td>
-                    <td>{endpoint.requests}</td>
-                    <td>{Math.round(endpoint.latency ?? 0)}ms</td>
-                    <td>{endpoint.max_threat_score}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </Panel>
+        {activeView === "overview" && (
+          <>
+            <section className="grid">
+              <Panel title="Endpoint Discovery">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Method</th>
+                      <th>Path</th>
+                      <th>Requests</th>
+                      <th>Latency</th>
+                      <th>Threat</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(overview?.endpoints ?? []).map((endpoint) => (
+                      <tr key={`${endpoint.method}:${endpoint.path}`}>
+                        <td>{endpoint.method}</td>
+                        <td>{endpoint.path}</td>
+                        <td>{endpoint.requests}</td>
+                        <td>{Math.round(endpoint.latency ?? 0)}ms</td>
+                        <td>{endpoint.max_threat_score}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </Panel>
 
-          <Panel title="IP Activity">
-            <div className="ip-list">
-              {(overview?.ips ?? []).map((entry) => (
-                <div className="ip-row" key={entry.ip}>
-                  <Globe2 size={16} />
-                  <span>{entry.ip}</span>
-                  <strong>{entry.requests}</strong>
-                  <meter min="0" max="100" value={entry.max_threat_score} />
+              <Panel title="IP Activity">
+                <div className="ip-list">
+                  {(overview?.ips ?? []).map((entry) => (
+                    <div className="ip-row" key={entry.ip}>
+                      <Globe2 size={16} />
+                      <span>{entry.ip}</span>
+                      <strong>{entry.requests}</strong>
+                      <meter min="0" max="100" value={entry.max_threat_score} />
+                    </div>
+                  ))}
                 </div>
-              ))}
-            </div>
-          </Panel>
-        </section>
+              </Panel>
+            </section>
 
-        <Panel title="Incidents">
-          <div className="incident-list">
-            {incidents.map((incident) => (
-              <article className="incident" key={incident.id}>
-                <span className={`severity ${incident.severity}`}>{incident.severity}</span>
-                <div>
-                  <strong>{incident.title}</strong>
-                  <p>{incident.description}</p>
-                </div>
-                <time>{new Date(incident.created_at).toLocaleString()}</time>
-              </article>
-            ))}
-          </div>
-        </Panel>
+            <IncidentPanel incidents={incidents} />
+          </>
+        )}
+
+        {activeView === "requests" && (
+          <RequestExplorer
+            filters={requestFilters}
+            requests={requests}
+            onChange={setRequestFilters}
+            onRefresh={() => void loadRequests().catch(() => setRequests(filterDemoRequests(requestFilters)))}
+          />
+        )}
+
+        {activeView === "incidents" && <IncidentPanel incidents={incidents} />}
       </section>
     </main>
   );
+
+  function changeView(view: "overview" | "requests" | "incidents") {
+    setActiveView(view);
+    const url = new URL(window.location.href);
+    url.searchParams.set("view", view);
+    window.history.replaceState(null, "", url);
+  }
 }
 
 function Metric(props: { label: string; value: string | number; icon: React.ReactNode }) {
@@ -278,6 +357,123 @@ function Panel(props: { title: string; children: React.ReactNode }) {
       <h2>{props.title}</h2>
       {props.children}
     </section>
+  );
+}
+
+function RequestExplorer(props: {
+  filters: RequestFilters;
+  requests: RequestRecord[];
+  onChange: (filters: RequestFilters) => void;
+  onRefresh: () => void;
+}) {
+  const setFilter = (key: keyof RequestFilters, value: string) => {
+    props.onChange({ ...props.filters, [key]: value });
+  };
+
+  return (
+    <Panel title="Request Explorer">
+      <div className="filters">
+        <label>
+          <Search size={15} />
+          <input
+            value={props.filters.query}
+            onChange={(event) => setFilter("query", event.target.value)}
+            placeholder="Path or route"
+          />
+        </label>
+        <label>
+          <Filter size={15} />
+          <select value={props.filters.method} onChange={(event) => setFilter("method", event.target.value)}>
+            <option value="">All methods</option>
+            <option value="GET">GET</option>
+            <option value="POST">POST</option>
+            <option value="PUT">PUT</option>
+            <option value="PATCH">PATCH</option>
+            <option value="DELETE">DELETE</option>
+          </select>
+        </label>
+        <input
+          value={props.filters.status}
+          inputMode="numeric"
+          onChange={(event) => setFilter("status", event.target.value)}
+          placeholder="Status"
+        />
+        <input
+          value={props.filters.ip}
+          onChange={(event) => setFilter("ip", event.target.value)}
+          placeholder="IP address"
+        />
+        <input
+          value={props.filters.threatMin}
+          inputMode="numeric"
+          onChange={(event) => setFilter("threatMin", event.target.value)}
+          placeholder="Min threat"
+        />
+        <button className="icon-button" onClick={props.onRefresh} title="Refresh request data">
+          <RefreshCcw size={16} />
+        </button>
+      </div>
+
+      <div className="request-table">
+        <table>
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>Method</th>
+              <th>Route</th>
+              <th>Status</th>
+              <th>Latency</th>
+              <th>IP</th>
+              <th>Kind</th>
+              <th>Threat</th>
+            </tr>
+          </thead>
+          <tbody>
+            {props.requests.map((request) => (
+              <tr key={request.id}>
+                <td>{new Date(request.timestamp).toLocaleTimeString()}</td>
+                <td>{request.method}</td>
+                <td>
+                  <strong>{request.route ?? request.path}</strong>
+                  <span>{request.evm_rpc_method ?? request.graphql_operation_name ?? request.service_name}</span>
+                </td>
+                <td>
+                  <span className={`status-code s${Math.floor(request.status_code / 100)}xx`}>
+                    {request.status_code}
+                  </span>
+                </td>
+                <td>{request.latency_ms}ms</td>
+                <td>{request.ip ?? "N/A"}</td>
+                <td>{request.kind}</td>
+                <td>
+                  <meter min="0" max="100" value={request.threat_score} />
+                  <span>{request.threat_score}</span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </Panel>
+  );
+}
+
+function IncidentPanel(props: { incidents: Incident[] }) {
+  return (
+    <Panel title="Incidents">
+      <div className="incident-list">
+        {props.incidents.map((incident) => (
+          <article className="incident" key={incident.id}>
+            <span className={`severity ${incident.severity}`}>{incident.severity}</span>
+            <div>
+              <strong>{incident.title}</strong>
+              <p>{incident.description}</p>
+            </div>
+            <time>{new Date(incident.created_at).toLocaleString()}</time>
+          </article>
+        ))}
+      </div>
+    </Panel>
   );
 }
 
@@ -306,6 +502,32 @@ function formatLatency(value: number) {
 
 function formatCount(value: number) {
   return value < 0 ? "N/A" : value;
+}
+
+function getInitialView(): "overview" | "requests" | "incidents" {
+  const view = new URLSearchParams(window.location.search).get("view");
+  return view === "requests" || view === "incidents" ? view : "overview";
+}
+
+function getHeader(view: "overview" | "requests" | "incidents") {
+  if (view === "requests") {
+    return {
+      title: "Request Explorer",
+      subtitle: "Filter recent REST, GraphQL, and EVM JSON-RPC events by risk and behavior."
+    };
+  }
+
+  if (view === "incidents") {
+    return {
+      title: "Incidents",
+      subtitle: "Review grouped security events and their current severity."
+    };
+  }
+
+  return {
+    title: "Security Overview",
+    subtitle: "REST, GraphQL, and EVM JSON-RPC telemetry from monitored services."
+  };
 }
 
 const demoOverview: Overview = {
@@ -390,3 +612,92 @@ const demoSystemMetrics: SystemMetrics = {
   processingLatencyMs: 0,
   websocketConnections: 0
 };
+
+const demoRequests: RequestRecord[] = [
+  {
+    id: "req-1",
+    timestamp: new Date().toISOString(),
+    service_name: "demo-api",
+    environment: "demo",
+    kind: "rest",
+    method: "POST",
+    path: "/api/login",
+    route: "/api/login",
+    ip: "203.0.113.14",
+    user_agent: "curl/8.0",
+    status_code: 401,
+    latency_ms: 82,
+    auth_present: true,
+    auth_failed: true,
+    threat_score: 92,
+    threat_severity: "critical"
+  },
+  {
+    id: "req-2",
+    timestamp: new Date(Date.now() - 1000 * 45).toISOString(),
+    service_name: "demo-api",
+    environment: "demo",
+    kind: "evm_rpc",
+    method: "POST",
+    path: "/rpc",
+    route: "/rpc",
+    ip: "198.51.100.22",
+    status_code: 401,
+    latency_ms: 76,
+    auth_present: true,
+    auth_failed: true,
+    evm_rpc_method: "eth_sendRawTransaction",
+    threat_score: 76,
+    threat_severity: "high"
+  },
+  {
+    id: "req-3",
+    timestamp: new Date(Date.now() - 1000 * 90).toISOString(),
+    service_name: "demo-api",
+    environment: "demo",
+    kind: "graphql",
+    method: "POST",
+    path: "/graphql",
+    route: "/graphql",
+    ip: "192.0.2.41",
+    status_code: 500,
+    latency_ms: 184,
+    auth_present: true,
+    auth_failed: false,
+    graphql_operation_name: "UpdateProfile",
+    graphql_operation_type: "mutation",
+    threat_score: 61,
+    threat_severity: "high"
+  },
+  {
+    id: "req-4",
+    timestamp: new Date(Date.now() - 1000 * 120).toISOString(),
+    service_name: "demo-api",
+    environment: "demo",
+    kind: "rest",
+    method: "GET",
+    path: "/api/users/283",
+    route: "/api/users/:id",
+    ip: "198.51.100.80",
+    status_code: 200,
+    latency_ms: 44,
+    auth_present: true,
+    auth_failed: false,
+    threat_score: 18,
+    threat_severity: "low"
+  }
+];
+
+function filterDemoRequests(filters: RequestFilters) {
+  return demoRequests.filter((request) => {
+    if (filters.method && request.method !== filters.method) return false;
+    if (filters.status && request.status_code !== Number(filters.status)) return false;
+    if (filters.ip && request.ip !== filters.ip) return false;
+    if (filters.threatMin && request.threat_score < Number(filters.threatMin)) return false;
+    if (filters.query) {
+      const haystack = `${request.path} ${request.route ?? ""}`.toLowerCase();
+      return haystack.includes(filters.query.toLowerCase());
+    }
+    return true;
+  });
+}
