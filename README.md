@@ -130,6 +130,8 @@ Seed realistic demo traffic after the API and worker are running:
 npm run seed:demo
 ```
 
+The seed script posts events through the ingestion API. With Postgres, Redis, the API, and worker running, those events move through the live pipeline before appearing in the dashboard.
+
 The dashboard runs at `http://localhost:5173` and the API runs at `http://localhost:8080`.
 
 Operational endpoints:

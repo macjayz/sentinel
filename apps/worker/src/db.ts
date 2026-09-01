@@ -64,9 +64,9 @@ export async function persistEvent(pool: pg.Pool, event: SentinelEvent, assessme
           event.request.route,
           event.request.ip,
           event.request.userAgent,
-          event.request.headers,
-          event.request.query,
-          event.request.body ?? null,
+          toJsonb(event.request.headers),
+          toJsonb(event.request.query),
+          toJsonb(event.request.body ?? null),
           event.response.statusCode,
           event.response.latencyMs,
           event.response.bodyBytes ?? null,
@@ -81,7 +81,7 @@ export async function persistEvent(pool: pg.Pool, event: SentinelEvent, assessme
           event.evmRpc?.contractAddress,
           assessment.score,
           assessment.severity,
-          assessment.signals
+          toJsonb(assessment.signals)
         ]
       );
     }
@@ -121,14 +121,15 @@ export async function createIncidentIfNeeded(
             signals = $4,
             attacker_ips = $5,
             request_count = request_count + 1,
-            last_seen_at = $6
+            started_at = least(started_at, $6),
+            last_seen_at = greatest(last_seen_at, $6)
         where id = $1
         `,
         [
           existing.rows[0].id,
           assessment.severity,
           fingerprint.description,
-          assessment.signals,
+          toJsonb(assessment.signals),
           JSON.stringify(attackerIps),
           event.timestamp
         ]
@@ -150,7 +151,7 @@ export async function createIncidentIfNeeded(
           assessment.severity,
           fingerprint.title,
           fingerprint.description,
-          assessment.signals,
+          toJsonb(assessment.signals),
           fingerprint.affectedEndpoint,
           JSON.stringify(mergeIps([], fingerprint.attackerIp)),
           event.timestamp
@@ -171,4 +172,8 @@ function mergeIps(existing: unknown, ip?: string) {
   const values = Array.isArray(existing) ? existing.filter((value) => typeof value === "string") : [];
   if (ip && !values.includes(ip)) values.push(ip);
   return values;
+}
+
+function toJsonb(value: unknown) {
+  return JSON.stringify(value);
 }

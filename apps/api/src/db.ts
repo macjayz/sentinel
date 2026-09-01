@@ -19,11 +19,11 @@ export async function getOverview(pool: pg.Pool, projectId = "demo") {
     ]),
     pool.query(
       `
-      select path, method, count(*)::int as requests, avg(latency_ms)::float as latency,
+      select coalesce(route, path) as path, method, count(*)::int as requests, avg(latency_ms)::float as latency,
              max(threat_score)::int as max_threat_score
       from api_events
       where project_id = $1
-      group by path, method
+      group by coalesce(route, path), method
       order by requests desc
       limit 12
     `,

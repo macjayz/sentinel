@@ -47,9 +47,9 @@ export async function buildServer() {
   });
 
   app.get("/health", async () => ({ ok: true }));
-  app.get("/ready", async () => buildReadiness(pool, redis, config.streamName));
+  app.get("/ready", async () => buildReadiness(pool, redis, config.streamName, config.groupName));
   app.get("/metrics", async (_request, reply) => {
-    const snapshot = await buildMetricsSnapshot(metrics, pool, redis, config.streamName, liveHub);
+    const snapshot = await buildMetricsSnapshot(metrics, pool, redis, config.streamName, config.groupName, liveHub);
     reply.header("content-type", "text/plain; version=0.0.4").send(toPrometheus(snapshot));
   });
 
@@ -120,7 +120,7 @@ export async function buildServer() {
     });
   });
   app.get("/v1/analytics/system", async () =>
-    buildMetricsSnapshot(metrics, pool, redis, config.streamName, liveHub)
+    buildMetricsSnapshot(metrics, pool, redis, config.streamName, config.groupName, liveHub)
   );
 
   app.get("/v1/api-keys", async (request, reply) => {

@@ -4,6 +4,7 @@ export type ApiConfig = {
   redisUrl: string;
   sentinelApiKey: string;
   streamName: string;
+  groupName: string;
 };
 
 export function loadConfig(): ApiConfig {
@@ -12,6 +13,7 @@ export function loadConfig(): ApiConfig {
     databaseUrl: process.env.DATABASE_URL ?? "postgres://sentinel:sentinel@localhost:5432/sentinel",
     redisUrl: process.env.REDIS_URL ?? "redis://localhost:6379",
     sentinelApiKey: process.env.SENTINEL_API_KEY ?? "dev-sentinel-key",
-    streamName: process.env.SENTINEL_STREAM ?? "sentinel:events"
+    streamName: process.env.SENTINEL_STREAM ?? "sentinel:events",
+    groupName: process.env.SENTINEL_GROUP ?? "sentinel-workers"
   };
 }

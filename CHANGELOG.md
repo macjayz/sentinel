@@ -25,4 +25,5 @@ Initial alpha release.
 - Added dashboard sign-in shell, operator role display, and project switcher.
 - Added API key list, create, and revoke endpoints with dashboard key management UI.
 - Added `@sentinel/web3` with standalone RPC client, EIP-1193 wrapper, viem-compatible transport, and RPC dashboard visibility.
+- Verified the live local pipeline against Postgres and Redis, including SDK-style seed traffic, worker persistence, grouped incidents, normalized endpoint discovery, and queue backlog metrics.
 - Added CI, issue templates, contribution guide, security policy, roadmap, and dashboard screenshot.

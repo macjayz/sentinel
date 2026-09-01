@@ -18,6 +18,7 @@
 - API key list, create, and revoke workflows
 - Web3 RPC SDK with EIP-1193 and viem-compatible transport helpers
 - RPC dashboard view with method, provider, chain, latency, and threat context
+- Live local pipeline verification with Postgres, Redis, ingestion, worker persistence, incidents, and dashboard reads
 
 ## v0.2 Product Hardening
 
