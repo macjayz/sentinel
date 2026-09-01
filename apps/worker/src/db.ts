@@ -38,13 +38,15 @@ export async function persistEvent(pool: pg.Pool, event: SentinelEvent, assessme
       id, trace_id, parent_span_id, project_id, service_name, environment, timestamp, kind, method, path, route, ip,
       user_agent, request_headers, request_query, request_body, status_code, latency_ms,
       body_bytes, auth_present, auth_failed, graphql_operation_name, graphql_operation_type,
-      evm_rpc_method, threat_score, threat_severity, threat_signals
+      evm_rpc_method, evm_chain_id, evm_provider, wallet_address, contract_address,
+      threat_score, threat_severity, threat_signals
     )
     values (
       $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
       $13, $14, $15, $16, $17, $18,
       $19, $20, $21, $22, $23,
-      $24, $25, $26, $27
+      $24, $25, $26, $27, $28,
+      $29, $30, $31
     )
     on conflict (id) do nothing
     `,
@@ -73,6 +75,10 @@ export async function persistEvent(pool: pg.Pool, event: SentinelEvent, assessme
           event.graphQL?.operationName,
           event.graphQL?.operationType,
           event.evmRpc?.method,
+          event.evmRpc?.chainId,
+          event.evmRpc?.provider,
+          event.evmRpc?.walletAddress,
+          event.evmRpc?.contractAddress,
           assessment.score,
           assessment.severity,
           assessment.signals

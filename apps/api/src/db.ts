@@ -117,6 +117,7 @@ export async function getRequests(pool: pg.Pool, filters: RequestFilters = {}) {
     select id, trace_id, parent_span_id, timestamp, service_name, environment, kind, method, path, route, ip, user_agent,
            status_code, latency_ms, body_bytes, auth_present, auth_failed,
            graphql_operation_name, graphql_operation_type, evm_rpc_method,
+           evm_chain_id, evm_provider, wallet_address, contract_address,
            threat_score, threat_severity
     from api_events
     ${where}

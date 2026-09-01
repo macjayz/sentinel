@@ -24,4 +24,5 @@ Initial alpha release.
 - Added project-scope enforcement for ingestion and analytics queries.
 - Added dashboard sign-in shell, operator role display, and project switcher.
 - Added API key list, create, and revoke endpoints with dashboard key management UI.
+- Added `@sentinel/web3` with standalone RPC client, EIP-1193 wrapper, viem-compatible transport, and RPC dashboard visibility.
 - Added CI, issue templates, contribution guide, security policy, roadmap, and dashboard screenshot.

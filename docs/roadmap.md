@@ -16,6 +16,8 @@
 - Organization, user, membership, role, and project-scoped API key foundation
 - Dashboard sign-in shell, operator role context, and project switcher
 - API key list, create, and revoke workflows
+- Web3 RPC SDK with EIP-1193 and viem-compatible transport helpers
+- RPC dashboard view with method, provider, chain, latency, and threat context
 
 ## v0.2 Product Hardening
 
@@ -27,6 +29,7 @@
 - Endpoint trend charts
 - Incident status updates
 - WebSocket event fanout from worker results
+- Deeper RPC method baselines and provider reliability analytics
 
 ## v0.3 Integrations
 

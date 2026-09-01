@@ -98,6 +98,10 @@ type RequestRecord = {
   graphql_operation_name?: string;
   graphql_operation_type?: string;
   evm_rpc_method?: string;
+  evm_chain_id?: string;
+  evm_provider?: string;
+  wallet_address?: string;
+  contract_address?: string;
   threat_score: number;
   threat_severity: string;
 };
@@ -120,7 +124,7 @@ type ApiKeyRecord = {
   revoked_at?: string | null;
 };
 
-type DashboardView = "overview" | "requests" | "incidents" | "api-keys";
+type DashboardView = "overview" | "requests" | "incidents" | "api-keys" | "rpc";
 
 type ProjectOption = {
   id: string;
@@ -320,6 +324,9 @@ function App() {
           <button className={activeView === "api-keys" ? "active" : ""} onClick={() => changeView("api-keys")}>
             API Keys
           </button>
+          <button className={activeView === "rpc" ? "active" : ""} onClick={() => changeView("rpc")}>
+            RPC
+          </button>
           <button className="disabled" disabled>
             Sources
           </button>
@@ -496,6 +503,8 @@ function App() {
             onRevoke={(keyId) => void revokeDashboardApiKey(keyId)}
           />
         )}
+
+        {activeView === "rpc" && <RpcPanel requests={requests} />}
       </section>
     </main>
   );
@@ -811,6 +820,56 @@ function ApiKeyPanel(props: {
   );
 }
 
+function RpcPanel(props: { requests: RequestRecord[] }) {
+  const rpcRequests = props.requests.filter((request) => request.kind === "evm_rpc");
+  const slowest = Math.max(0, ...rpcRequests.map((request) => request.latency_ms));
+  const failures = rpcRequests.filter((request) => request.status_code >= 400).length;
+
+  return (
+    <Panel title="EVM RPC Activity">
+      <section className="rpc-summary">
+        <StatusItem label="RPC Calls" value={rpcRequests.length} active icon={<Activity size={16} />} />
+        <StatusItem label="Failures" value={failures} active={failures === 0} icon={<AlertTriangle size={16} />} />
+        <StatusItem label="Slowest Call" value={`${slowest}ms`} active={slowest < 500} icon={<Clock size={16} />} />
+      </section>
+      <div className="request-table rpc-table">
+        <table>
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>Method</th>
+              <th>Chain</th>
+              <th>Provider</th>
+              <th>Status</th>
+              <th>Latency</th>
+              <th>Address</th>
+              <th>Threat</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rpcRequests.map((request) => (
+              <tr key={request.id}>
+                <td data-label="Time">{new Date(request.timestamp).toLocaleTimeString()}</td>
+                <td data-label="Method">{request.evm_rpc_method ?? "unknown"}</td>
+                <td data-label="Chain">{request.evm_chain_id ?? "N/A"}</td>
+                <td data-label="Provider">{request.evm_provider ?? "N/A"}</td>
+                <td data-label="Status">
+                  <span className={`status-code s${Math.floor(request.status_code / 100)}xx`}>
+                    {request.status_code}
+                  </span>
+                </td>
+                <td data-label="Latency">{request.latency_ms}ms</td>
+                <td data-label="Address">{shortAddress(request.wallet_address ?? request.contract_address)}</td>
+                <td data-label="Threat">{request.threat_score}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </Panel>
+  );
+}
+
 function StatusItem(props: {
   label: string;
   value: string | number;
@@ -840,7 +899,9 @@ function formatCount(value: number) {
 
 function getInitialView(): DashboardView {
   const view = new URLSearchParams(window.location.search).get("view");
-  return view === "requests" || view === "incidents" || view === "api-keys" ? view : "overview";
+  return view === "requests" || view === "incidents" || view === "api-keys" || view === "rpc"
+    ? view
+    : "overview";
 }
 
 function getHeader(view: DashboardView) {
@@ -865,6 +926,13 @@ function getHeader(view: DashboardView) {
     };
   }
 
+  if (view === "rpc") {
+    return {
+      title: "EVM RPC",
+      subtitle: "Inspect wallet, provider, chain, latency, and error patterns from JSON-RPC calls."
+    };
+  }
+
   return {
     title: "Security Overview",
     subtitle: "REST, GraphQL, and EVM JSON-RPC telemetry from monitored services."
@@ -879,6 +947,10 @@ function formatIps(ips?: string[]) {
 
 function shortTrace(traceId?: string) {
   return traceId ? traceId.slice(0, 8) : "N/A";
+}
+
+function shortAddress(address?: string) {
+  return address ? `${address.slice(0, 6)}...${address.slice(-4)}` : "N/A";
 }
 
 async function apiFetch(path: string, projectId: string, init: RequestInit = {}) {
@@ -1073,6 +1145,9 @@ const demoRequests: RequestRecord[] = [
     auth_present: true,
     auth_failed: true,
     evm_rpc_method: "eth_sendRawTransaction",
+    evm_chain_id: "1",
+    evm_provider: "alchemy",
+    wallet_address: "0x742d35Cc6634C0532925a3b844Bc454e4438f44e",
     threat_score: 76,
     threat_severity: "high"
   },
@@ -1223,6 +1298,28 @@ const checkoutRequests: RequestRecord[] = [
     auth_failed: false,
     threat_score: 68,
     threat_severity: "high"
+  },
+  {
+    id: "checkout-3",
+    trace_id: "6123456789abcdef0123456789abcdef",
+    timestamp: new Date(Date.now() - 1000 * 78).toISOString(),
+    service_name: "checkout-rpc",
+    environment: "demo",
+    kind: "evm_rpc",
+    method: "POST",
+    path: "/rpc",
+    route: "/rpc",
+    ip: "198.51.100.91",
+    status_code: 200,
+    latency_ms: 64,
+    auth_present: true,
+    auth_failed: false,
+    evm_rpc_method: "eth_estimateGas",
+    evm_chain_id: "1",
+    evm_provider: "infura",
+    contract_address: "0x0000000000000000000000000000000000000002",
+    threat_score: 32,
+    threat_severity: "medium"
   }
 ];
 

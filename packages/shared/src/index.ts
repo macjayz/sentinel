@@ -53,7 +53,10 @@ export const SentinelEventSchema = z.object({
   evmRpc: z
     .object({
       method: z.string(),
-      chainId: z.string().optional()
+      chainId: z.string().optional(),
+      provider: z.string().optional(),
+      walletAddress: z.string().optional(),
+      contractAddress: z.string().optional()
     })
     .optional()
 });

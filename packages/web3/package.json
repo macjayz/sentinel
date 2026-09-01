@@ -1,0 +1,23 @@
+{
+  "name": "@sentinel/web3",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@sentinel/sdk-node": "0.1.0",
+    "@sentinel/shared": "0.1.0"
+  },
+  "peerDependencies": {
+    "viem": ">=2"
+  },
+  "peerDependenciesMeta": {
+    "viem": {
+      "optional": true
+    }
+  }
+}

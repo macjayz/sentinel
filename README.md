@@ -12,6 +12,8 @@ Sentinel monitors REST, GraphQL, WebSocket, webhook, and EVM JSON-RPC traffic th
 
 ![Sentinel API key management](assets/screenshots/api-key-management.png)
 
+![Sentinel RPC activity](assets/screenshots/rpc-activity.png)
+
 ## MVP Scope
 
 Sentinel v0 targets:
@@ -75,6 +77,7 @@ The repository is organized as a TypeScript monorepo:
 - `apps/worker`: queue consumer, aggregation, and incident creation
 - `apps/dashboard`: operator dashboard
 - `packages/sdk-node`: Express middleware and Node client
+- `packages/web3`: EVM JSON-RPC client and viem-compatible transport wrapper
 - `packages/shared`: common schemas, redaction, scoring, and types
 - `infra`: Docker Compose and database migrations
 
@@ -148,6 +151,14 @@ Dashboard access:
 - The project switcher scopes dashboard analytics requests and keeps offline demo data project-aware.
 - The API Keys view provides project key listing, one-time key reveal, revoke actions, and an SDK setup snippet.
 
+Web3 RPC:
+
+- `@sentinel/web3` records EVM JSON-RPC method, chain ID, provider, latency, errors, and related addresses.
+- `createSentinelRpcClient` wraps standalone JSON-RPC calls.
+- `wrapEip1193Provider` instruments EIP-1193 providers.
+- `sentinelTransport` provides a viem-compatible transport factory for `createPublicClient`.
+- The RPC dashboard view summarizes EVM RPC failures, latency, providers, chains, and threat scores.
+
 Multi-tenancy:
 
 - Projects belong to organizations.
@@ -177,6 +188,21 @@ app.use(
     serviceName: "payments-api"
   })
 );
+```
+
+## Example Web3 Usage
+
+```ts
+import { sentinelTransport } from "@sentinel/web3";
+
+const transport = sentinelTransport({
+  projectId: "demo",
+  apiKey: process.env.SENTINEL_API_KEY!,
+  endpoint: "http://localhost:8080",
+  rpcUrl: process.env.EVM_RPC_URL!,
+  chainId: 1,
+  provider: "alchemy"
+});
 ```
 
 ## Verification

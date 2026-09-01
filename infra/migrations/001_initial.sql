@@ -82,6 +82,10 @@ create table if not exists api_events (
   graphql_operation_name text,
   graphql_operation_type text,
   evm_rpc_method text,
+  evm_chain_id text,
+  evm_provider text,
+  wallet_address text,
+  contract_address text,
   threat_score int not null default 0,
   threat_severity text not null default 'low',
   threat_signals jsonb not null default '[]',
@@ -93,6 +97,13 @@ create index if not exists api_events_path_idx on api_events(path);
 create index if not exists api_events_ip_idx on api_events(ip);
 create index if not exists api_events_threat_idx on api_events(threat_score desc);
 create index if not exists api_events_trace_id_idx on api_events(trace_id);
+create index if not exists api_events_evm_rpc_method_idx on api_events(evm_rpc_method);
+
+alter table api_events
+  add column if not exists evm_chain_id text,
+  add column if not exists evm_provider text,
+  add column if not exists wallet_address text,
+  add column if not exists contract_address text;
 
 create table if not exists incidents (
   id uuid primary key default gen_random_uuid(),

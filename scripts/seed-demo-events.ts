@@ -57,7 +57,10 @@ const events: SentinelEvent[] = [
       kind: "evm_rpc",
       evmRpc: {
         method: index % 4 === 0 ? "eth_sendRawTransaction" : "eth_call",
-        chainId: "1"
+        chainId: "1",
+        provider: index % 2 === 0 ? "alchemy" : "infura",
+        walletAddress: "0x742d35Cc6634C0532925a3b844Bc454e4438f44e",
+        contractAddress: "0x0000000000000000000000000000000000000002"
       }
     })
   )

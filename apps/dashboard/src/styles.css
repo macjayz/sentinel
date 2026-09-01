@@ -572,6 +572,13 @@ pre {
   min-width: 760px;
 }
 
+.rpc-summary {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-bottom: 16px;
+}
+
 .request-table {
   overflow-x: auto;
 }
@@ -735,11 +742,50 @@ time {
     width: 42px;
   }
 
+  .rpc-table {
+    overflow-x: visible;
+  }
+
+  .rpc-table table,
+  .rpc-table tbody,
+  .rpc-table tr,
+  .rpc-table td {
+    display: block;
+    min-width: 0;
+  }
+
+  .rpc-table thead {
+    display: none;
+  }
+
+  .rpc-table tr {
+    border: 1px solid #e7ebef;
+    border-radius: 8px;
+    margin-bottom: 10px;
+    padding: 8px;
+  }
+
+  .rpc-table td {
+    align-items: center;
+    border-bottom: 0;
+    display: flex;
+    gap: 12px;
+    justify-content: space-between;
+    padding: 8px;
+  }
+
+  .rpc-table td::before {
+    color: #687789;
+    content: attr(data-label);
+    font-weight: 700;
+  }
+
   .metrics,
   .system-strip,
   .filters,
   .grid,
-  .key-layout {
+  .key-layout,
+  .rpc-summary {
     grid-template-columns: 1fr;
   }
 
