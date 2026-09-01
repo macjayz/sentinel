@@ -1,6 +1,15 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { Activity, AlertTriangle, Clock, Globe2, Radio, ShieldCheck } from "lucide-react";
+import {
+  Activity,
+  AlertTriangle,
+  Clock,
+  Database,
+  Gauge,
+  Globe2,
+  Radio,
+  ShieldCheck
+} from "lucide-react";
 import "./styles.css";
 
 type Overview = {
@@ -32,28 +41,63 @@ type Incident = {
   created_at: string;
 };
 
+type Readiness = {
+  status: "ready" | "degraded";
+  checks: {
+    database: { ok: boolean; latencyMs: number };
+    queue: { ok: boolean; latencyMs: number; depth: number };
+  };
+};
+
+type SystemMetrics = {
+  uptimeSeconds: number;
+  totalRequests: number;
+  ingestionRate: number;
+  ingestionBatches: number;
+  failedJobs: number;
+  queueDepth: number;
+  databaseLatencyMs: number;
+  processingLatencyMs: number;
+  websocketConnections: number;
+};
+
 const apiBase = import.meta.env.VITE_SENTINEL_API_URL ?? "http://localhost:8080";
 
 function App() {
   const [overview, setOverview] = useState<Overview | null>(null);
   const [incidents, setIncidents] = useState<Incident[]>([]);
+  const [readiness, setReadiness] = useState<Readiness>(demoReadiness);
+  const [systemMetrics, setSystemMetrics] = useState<SystemMetrics>(demoSystemMetrics);
   const [liveStatus, setLiveStatus] = useState("Connecting");
 
   useEffect(() => {
     async function load() {
       try {
-        const [overviewResponse, incidentResponse] = await Promise.all([
+        const [overviewResponse, incidentResponse, readinessResponse, systemResponse] = await Promise.all([
           fetch(`${apiBase}/v1/analytics/overview`),
-          fetch(`${apiBase}/v1/analytics/incidents`)
+          fetch(`${apiBase}/v1/analytics/incidents`),
+          fetch(`${apiBase}/ready`),
+          fetch(`${apiBase}/v1/analytics/system`)
         ]);
 
-        if (!overviewResponse.ok || !incidentResponse.ok) throw new Error("analytics_unavailable");
+        if (
+          !overviewResponse.ok ||
+          !incidentResponse.ok ||
+          !readinessResponse.ok ||
+          !systemResponse.ok
+        ) {
+          throw new Error("analytics_unavailable");
+        }
 
         setOverview(await overviewResponse.json());
         setIncidents(await incidentResponse.json());
+        setReadiness(await readinessResponse.json());
+        setSystemMetrics(await systemResponse.json());
       } catch {
         setOverview(demoOverview);
         setIncidents(demoIncidents);
+        setReadiness(demoReadiness);
+        setSystemMetrics(demoSystemMetrics);
       }
     }
 
@@ -122,6 +166,39 @@ function App() {
             icon={<Clock size={18} />}
           />
           <Metric label="Max Threat Score" value={maxThreatScore} icon={<ShieldCheck size={18} />} />
+        </section>
+
+        <section className="system-strip">
+          <StatusItem
+            label="Readiness"
+            value={readiness.status}
+            active={readiness.status === "ready"}
+            icon={<ShieldCheck size={16} />}
+          />
+          <StatusItem
+            label="Database"
+            value={`${readiness.checks.database.latencyMs}ms`}
+            active={readiness.checks.database.ok}
+            icon={<Database size={16} />}
+          />
+          <StatusItem
+            label="Queue Depth"
+            value={systemMetrics.queueDepth}
+            active={readiness.checks.queue.ok}
+            icon={<Gauge size={16} />}
+          />
+          <StatusItem
+            label="WebSockets"
+            value={systemMetrics.websocketConnections}
+            active={systemMetrics.websocketConnections >= 0}
+            icon={<Radio size={16} />}
+          />
+          <StatusItem
+            label="Failed Jobs"
+            value={systemMetrics.failedJobs}
+            active={systemMetrics.failedJobs === 0}
+            icon={<AlertTriangle size={16} />}
+          />
         </section>
 
         <section className="grid">
@@ -204,6 +281,23 @@ function Panel(props: { title: string; children: React.ReactNode }) {
   );
 }
 
+function StatusItem(props: {
+  label: string;
+  value: string | number;
+  active: boolean;
+  icon: React.ReactNode;
+}) {
+  return (
+    <article className="status-item">
+      <span className={props.active ? "ok" : "bad"}>{props.icon}</span>
+      <div>
+        <strong>{props.value}</strong>
+        <p>{props.label}</p>
+      </div>
+    </article>
+  );
+}
+
 createRoot(document.getElementById("root")!).render(<App />);
 
 const demoOverview: Overview = {
@@ -268,3 +362,23 @@ const demoIncidents: Incident[] = [
     created_at: new Date(Date.now() - 1000 * 60 * 7).toISOString()
   }
 ];
+
+const demoReadiness: Readiness = {
+  status: "degraded",
+  checks: {
+    database: { ok: false, latencyMs: -1 },
+    queue: { ok: false, latencyMs: -1, depth: -1 }
+  }
+};
+
+const demoSystemMetrics: SystemMetrics = {
+  uptimeSeconds: 0,
+  totalRequests: 0,
+  ingestionRate: 138,
+  ingestionBatches: 4,
+  failedJobs: 0,
+  queueDepth: 0,
+  databaseLatencyMs: -1,
+  processingLatencyMs: 0,
+  websocketConnections: 0
+};

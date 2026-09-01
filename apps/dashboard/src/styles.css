@@ -106,7 +106,8 @@ h2 {
 }
 
 .metric,
-.panel {
+.panel,
+.status-item {
   background: #ffffff;
   border: 1px solid #d9e0e7;
   border-radius: 8px;
@@ -128,6 +129,52 @@ h2 {
   height: 38px;
   justify-content: center;
   width: 38px;
+}
+
+.system-strip {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  margin-bottom: 16px;
+}
+
+.status-item {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  min-height: 74px;
+  padding: 14px;
+}
+
+.status-item span {
+  align-items: center;
+  border-radius: 8px;
+  display: flex;
+  height: 34px;
+  justify-content: center;
+  width: 34px;
+}
+
+.status-item span.ok {
+  background: #dff5ec;
+  color: #17633f;
+}
+
+.status-item span.bad {
+  background: #ffe5e5;
+  color: #a51d1d;
+}
+
+.status-item strong {
+  display: block;
+  font-size: 16px;
+  text-transform: capitalize;
+}
+
+.status-item p {
+  color: #687789;
+  font-size: 13px;
+  margin: 2px 0 0;
 }
 
 .grid {
@@ -246,6 +293,7 @@ time {
   }
 
   .metrics,
+  .system-strip,
   .grid {
     grid-template-columns: 1fr;
   }

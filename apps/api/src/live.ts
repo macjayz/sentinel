@@ -11,6 +11,9 @@ export function attachLiveServer(server: Server) {
   });
 
   return {
+    connectionCount() {
+      return clients.size;
+    },
     publish(channel: string, payload: unknown) {
       const message = JSON.stringify({ channel, payload });
       for (const client of clients) {

@@ -120,6 +120,13 @@ npm run seed:demo
 
 The dashboard runs at `http://localhost:5173` and the API runs at `http://localhost:8080`.
 
+Operational endpoints:
+
+- `GET /health`: process liveness
+- `GET /ready`: database and queue readiness
+- `GET /metrics`: Prometheus-style Sentinel runtime metrics
+- `GET /v1/analytics/system`: JSON system metrics for the dashboard
+
 ## Example SDK Usage
 
 ```ts

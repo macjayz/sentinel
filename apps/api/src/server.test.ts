@@ -32,4 +32,12 @@ describe("api server", () => {
     expect(response.statusCode).toBe(200);
     await app.close();
   });
+
+  it("adds request ids to responses", async () => {
+    const { app } = await buildServer();
+    const response = await app.inject({ method: "GET", url: "/health" });
+
+    expect(response.headers["x-request-id"]).toBeTypeOf("string");
+    await app.close();
+  });
 });

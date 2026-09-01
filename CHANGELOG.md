@@ -16,4 +16,5 @@ Initial alpha release.
 - Added React dashboard with live status and offline demo mode.
 - Added Docker Compose self-hosting configuration.
 - Added demo traffic seeding script.
+- Added health, readiness, runtime metrics, request IDs, and dashboard system status widgets.
 - Added CI, issue templates, contribution guide, security policy, roadmap, and dashboard screenshot.

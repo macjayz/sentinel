@@ -9,6 +9,7 @@
 - PostgreSQL persistence
 - Dashboard overview
 - Docker Compose self-hosting
+- Health, readiness, and runtime metrics
 
 ## v0.2 Product Hardening
 
