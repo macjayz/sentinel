@@ -13,6 +13,7 @@
 - Request explorer with method, status, IP, path, and threat filters
 - Grouped security incidents with affected endpoint, attacker IPs, duration, and request count
 - OpenTelemetry span hooks and trace IDs across the Sentinel pipeline
+- Organization, user, membership, role, and project-scoped API key foundation
 
 ## v0.2 Product Hardening
 

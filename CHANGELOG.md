@@ -20,4 +20,6 @@ Initial alpha release.
 - Added request explorer API and dashboard view with filters.
 - Added grouped incident fingerprints with affected endpoints, source IPs, request counts, and last seen timestamps.
 - Added OpenTelemetry span hooks and trace IDs across SDK, ingestion, queue, worker, storage, WebSocket, and request explorer views.
+- Added organization, user, role, membership, and project-scoped API key schema.
+- Added project-scope enforcement for ingestion and analytics queries.
 - Added CI, issue templates, contribution guide, security policy, roadmap, and dashboard screenshot.

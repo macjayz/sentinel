@@ -18,6 +18,7 @@ Sentinel v0 targets:
 - Ethereum/EVM JSON-RPC monitoring
 - Request and response metadata
 - Trace IDs for request correlation
+- Organization and project scoped storage
 - Latency, error, endpoint, IP, and authentication failure tracking
 - Configurable sensitive-field redaction
 - Abnormal request-rate detection
@@ -131,6 +132,13 @@ Operational endpoints:
 - `GET /metrics`: Prometheus-style Sentinel runtime metrics
 - `GET /v1/analytics/system`: JSON system metrics for the dashboard
 - `GET /v1/analytics/requests`: recent request explorer data with method, status, IP, path, and threat filters
+
+Multi-tenancy:
+
+- Projects belong to organizations.
+- API keys are scoped to projects.
+- Ingestion rejects events whose `projectId` does not match the API key scope.
+- Analytics queries default to the demo project and are structured to filter by `project_id`.
 
 Tracing:
 

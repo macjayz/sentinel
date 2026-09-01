@@ -1,11 +1,22 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { buildServer } from "./server.js";
+
+const dbMocks = vi.hoisted(() => ({
+  getRequests: vi.fn(() => []),
+  getOverview: vi.fn(() => ({
+    totals: { events: 0, openIncidents: 0, averageLatencyMs: 0 },
+    endpoints: [],
+    ips: []
+  }))
+}));
 
 vi.mock("./db.js", () => ({
   createPool: () => ({ end: vi.fn() }),
-  getOverview: () => ({ totals: { events: 0, openIncidents: 0, averageLatencyMs: 0 }, endpoints: [], ips: [] }),
+  getOverview: dbMocks.getOverview,
   getIncidents: () => [],
-  getRequests: () => []
+  getRequests: dbMocks.getRequests,
+  resolveProjectForApiKey: (_pool: unknown, apiKey: string) =>
+    apiKey === "dev-sentinel-key" ? { projectId: "demo", keyId: "test" } : null
 }));
 
 vi.mock("./queue.js", () => ({
@@ -14,6 +25,10 @@ vi.mock("./queue.js", () => ({
 }));
 
 describe("api server", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   it("rejects event ingestion without an api key", async () => {
     const { app } = await buildServer();
     const response = await app.inject({
@@ -23,6 +38,38 @@ describe("api server", () => {
     });
 
     expect(response.statusCode).toBe(401);
+    await app.close();
+  });
+
+  it("rejects event batches outside the api key project scope", async () => {
+    const { app } = await buildServer();
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/events",
+      headers: { "x-sentinel-api-key": "dev-sentinel-key" },
+      payload: {
+        events: [
+          {
+            id: "event-123",
+            projectId: "other",
+            serviceName: "api",
+            environment: "test",
+            timestamp: new Date().toISOString(),
+            kind: "rest",
+            request: {
+              method: "GET",
+              path: "/health",
+              headers: {},
+              query: {},
+              auth: { present: false, failed: false }
+            },
+            response: { statusCode: 200, latencyMs: 1 }
+          }
+        ]
+      }
+    });
+
+    expect(response.statusCode).toBe(403);
     await app.close();
   });
 
@@ -42,12 +89,28 @@ describe("api server", () => {
     await app.close();
   });
 
-  it("exposes request explorer data without sdk authentication", async () => {
+  it("keeps anonymous analytics scoped to the demo project", async () => {
     const { app } = await buildServer();
-    const response = await app.inject({ method: "GET", url: "/v1/analytics/requests?limit=10" });
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/analytics/requests?projectId=other&limit=10"
+    });
 
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual([]);
+    expect(dbMocks.getRequests).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ projectId: "demo" }));
+    await app.close();
+  });
+
+  it("rejects analytics requests with invalid api keys", async () => {
+    const { app } = await buildServer();
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/analytics/overview",
+      headers: { "x-sentinel-api-key": "invalid" }
+    });
+
+    expect(response.statusCode).toBe(401);
     await app.close();
   });
 });

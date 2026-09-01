@@ -2,8 +2,57 @@ create extension if not exists pgcrypto;
 
 create table if not exists projects (
   id text primary key,
+  organization_id uuid,
   name text not null,
   created_at timestamptz not null default now()
+);
+
+alter table projects
+  add column if not exists organization_id uuid;
+
+create table if not exists organizations (
+  id uuid primary key default gen_random_uuid(),
+  name text not null,
+  created_at timestamptz not null default now()
+);
+
+insert into organizations (id, name)
+values ('00000000-0000-0000-0000-000000000001', 'Demo Organization')
+on conflict (id) do nothing;
+
+update projects
+set organization_id = '00000000-0000-0000-0000-000000000001'
+where organization_id is null;
+
+alter table projects
+  alter column organization_id set not null;
+
+create table if not exists users (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid not null references organizations(id) on delete cascade,
+  email text not null unique,
+  password_hash text not null,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists project_memberships (
+  id uuid primary key default gen_random_uuid(),
+  project_id text not null references projects(id) on delete cascade,
+  user_id uuid not null references users(id) on delete cascade,
+  role text not null check (role in ('owner', 'admin', 'developer', 'viewer')),
+  created_at timestamptz not null default now(),
+  unique (project_id, user_id)
+);
+
+create table if not exists api_keys (
+  id uuid primary key default gen_random_uuid(),
+  project_id text not null references projects(id) on delete cascade,
+  name text not null,
+  key_hash text not null unique,
+  prefix text not null,
+  last_used_at timestamptz,
+  created_at timestamptz not null default now(),
+  revoked_at timestamptz
 );
 
 create table if not exists api_events (
@@ -67,6 +116,10 @@ where incident_key is null;
 
 create unique index if not exists incidents_incident_key_idx on incidents(incident_key);
 
-insert into projects (id, name)
-values ('demo', 'Demo Project')
+insert into projects (id, organization_id, name)
+values ('demo', '00000000-0000-0000-0000-000000000001', 'Demo Project')
 on conflict (id) do nothing;
+
+update projects
+set organization_id = '00000000-0000-0000-0000-000000000001'
+where id = 'demo';

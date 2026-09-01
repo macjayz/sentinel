@@ -3,7 +3,13 @@ import rateLimit from "@fastify/rate-limit";
 import Fastify from "fastify";
 import { EventBatchSchema, withSpan } from "@sentinel/shared";
 import { loadConfig } from "./config.js";
-import { createPool, getIncidents, getOverview, getRequests } from "./db.js";
+import {
+  createPool,
+  getIncidents,
+  getOverview,
+  getRequests,
+  resolveProjectForApiKey
+} from "./db.js";
 import { attachLiveServer } from "./live.js";
 import {
   buildMetricsSnapshot,
@@ -28,19 +34,7 @@ export async function buildServer() {
     metrics.totalRequests += 1;
     reply.header("x-request-id", request.id);
 
-    if (
-      request.url === "/health" ||
-      request.url === "/ready" ||
-      request.url === "/metrics" ||
-      request.url.startsWith("/v1/analytics")
-    ) {
-      return;
-    }
-
-    const apiKey = request.headers["x-sentinel-api-key"];
-    if (apiKey !== config.sentinelApiKey) {
-      reply.code(401).send({ error: "invalid_api_key" });
-    }
+    return;
   });
 
   app.addHook("onResponse", async (_request, reply) => {
@@ -63,10 +57,21 @@ export async function buildServer() {
         "http.route": "/v1/events"
       },
       async () => {
+        const apiKey = String(request.headers["x-sentinel-api-key"] ?? "");
+        const key = await resolveProjectForApiKey(pool, apiKey, config.sentinelApiKey);
+        if (!key) {
+          return reply.code(401).send({ error: "invalid_api_key" });
+        }
+
         const parsed = EventBatchSchema.safeParse(request.body);
         if (!parsed.success) {
           metrics.failedIngestionBatches += 1;
           return reply.code(400).send({ error: "invalid_event_batch", details: parsed.error.flatten() });
+        }
+
+        const hasProjectMismatch = parsed.data.events.some((event) => event.projectId !== key.projectId);
+        if (hasProjectMismatch) {
+          return reply.code(403).send({ error: "project_scope_mismatch" });
         }
 
         await enqueueEvents(redis, config.streamName, parsed.data.events);
@@ -78,9 +83,17 @@ export async function buildServer() {
     );
   });
 
-  app.get("/v1/analytics/overview", async () => getOverview(pool));
-  app.get("/v1/analytics/incidents", async () => getIncidents(pool));
-  app.get("/v1/analytics/requests", async (request) => {
+  app.get("/v1/analytics/overview", async (request, reply) => {
+    const scope = await getAnalyticsProjectScope(pool, config.sentinelApiKey, request.headers["x-sentinel-api-key"]);
+    if (!scope) return reply.code(401).send({ error: "invalid_api_key" });
+    return getOverview(pool, scope.projectId);
+  });
+  app.get("/v1/analytics/incidents", async (request, reply) => {
+    const scope = await getAnalyticsProjectScope(pool, config.sentinelApiKey, request.headers["x-sentinel-api-key"]);
+    if (!scope) return reply.code(401).send({ error: "invalid_api_key" });
+    return getIncidents(pool, scope.projectId);
+  });
+  app.get("/v1/analytics/requests", async (request, reply) => {
     const query = request.query as {
       method?: string;
       status?: string;
@@ -89,8 +102,11 @@ export async function buildServer() {
       q?: string;
       limit?: string;
     };
+    const scope = await getAnalyticsProjectScope(pool, config.sentinelApiKey, request.headers["x-sentinel-api-key"]);
+    if (!scope) return reply.code(401).send({ error: "invalid_api_key" });
 
     return getRequests(pool, {
+      projectId: scope.projectId,
       method: query.method,
       status: query.status ? Number(query.status) : undefined,
       threatMin: query.threatMin ? Number(query.threatMin) : undefined,
@@ -110,6 +126,17 @@ export async function buildServer() {
   });
 
   return { app, config };
+}
+
+async function getAnalyticsProjectScope(
+  pool: ReturnType<typeof createPool>,
+  fallbackApiKey: string,
+  apiKeyHeader: string | string[] | undefined
+) {
+  if (!apiKeyHeader) return { projectId: "demo", keyId: "anonymous-demo" };
+
+  const apiKey = Array.isArray(apiKeyHeader) ? apiKeyHeader[0] : apiKeyHeader;
+  return resolveProjectForApiKey(pool, apiKey, fallbackApiKey);
 }
 
 if (process.env.NODE_ENV !== "test") {
