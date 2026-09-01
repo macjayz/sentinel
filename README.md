@@ -68,6 +68,18 @@ The repository is organized as a TypeScript monorepo:
 - `packages/shared`: common schemas, redaction, scoring, and types
 - `infra`: Docker Compose and database migrations
 
+## Why This Project Matters
+
+Most teams can see application logs, but they cannot easily answer security-focused API questions:
+
+- Which endpoints are newly discovered?
+- Which IPs are causing authentication failures?
+- Which GraphQL operations are slow or failing?
+- Which EVM JSON-RPC methods are risky?
+- Which requests should become incidents?
+
+Sentinel is designed to make those answers visible in a self-hosted stack developers can understand and extend.
+
 ## Status
 
 Sentinel is under active MVP implementation.
@@ -99,3 +111,34 @@ npm run dev -w examples/express
 ```
 
 The dashboard runs at `http://localhost:5173` and the API runs at `http://localhost:8080`.
+
+## Example SDK Usage
+
+```ts
+import express from "express";
+import { sentinelExpress } from "@sentinel/sdk-node";
+
+const app = express();
+
+app.use(
+  sentinelExpress({
+    projectId: "demo",
+    apiKey: "dev-sentinel-key",
+    endpoint: "http://localhost:8080",
+    serviceName: "payments-api"
+  })
+);
+```
+
+## Verification
+
+```bash
+npm run typecheck
+npm test
+npm run lint
+npm run build
+```
+
+## Roadmap
+
+See [docs/roadmap.md](docs/roadmap.md).
