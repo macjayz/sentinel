@@ -14,10 +14,12 @@
 - Grouped security incidents with affected endpoint, attacker IPs, duration, and request count
 - OpenTelemetry span hooks and trace IDs across the Sentinel pipeline
 - Organization, user, membership, role, and project-scoped API key foundation
+- Dashboard sign-in shell, operator role context, and project switcher
 
 ## v0.2 Product Hardening
 
 - Project management UI
+- Backed password sessions for the dashboard
 - API key rotation
 - SDK retry backoff controls
 - Worker dead-letter stream

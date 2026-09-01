@@ -22,4 +22,5 @@ Initial alpha release.
 - Added OpenTelemetry span hooks and trace IDs across SDK, ingestion, queue, worker, storage, WebSocket, and request explorer views.
 - Added organization, user, role, membership, and project-scoped API key schema.
 - Added project-scope enforcement for ingestion and analytics queries.
+- Added dashboard sign-in shell, operator role display, and project switcher.
 - Added CI, issue templates, contribution guide, security policy, roadmap, and dashboard screenshot.

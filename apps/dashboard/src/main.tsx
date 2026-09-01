@@ -3,15 +3,19 @@ import { createRoot } from "react-dom/client";
 import {
   Activity,
   AlertTriangle,
+  Building2,
   Clock,
   Database,
   Filter,
   Gauge,
   Globe2,
+  KeyRound,
+  LogOut,
   Radio,
   RefreshCcw,
   Search,
-  ShieldCheck
+  ShieldCheck,
+  User
 } from "lucide-react";
 import "./styles.css";
 
@@ -103,12 +107,39 @@ type RequestFilters = {
   query: string;
 };
 
+type ProjectOption = {
+  id: string;
+  name: string;
+  role: "owner" | "admin" | "developer" | "viewer";
+};
+
+type AuthSession = {
+  user: {
+    name: string;
+    email: string;
+  };
+  organization: {
+    id: string;
+    name: string;
+  };
+  projects: ProjectOption[];
+};
+
 const apiBase = import.meta.env.VITE_SENTINEL_API_URL ?? "http://localhost:8080";
+const dashboardApiKey = import.meta.env.VITE_SENTINEL_API_KEY;
 
 function App() {
   const [activeView, setActiveView] = useState<"overview" | "requests" | "incidents">(
     getInitialView()
   );
+  const [isAuthenticated, setIsAuthenticated] = useState(
+    () => window.localStorage.getItem("sentinel.dashboard.session") === "active"
+  );
+  const [session] = useState<AuthSession>(demoSession);
+  const [selectedProjectId, setSelectedProjectId] = useState(
+    () => window.localStorage.getItem("sentinel.dashboard.project") ?? demoSession.projects[0].id
+  );
+  const [authForm, setAuthForm] = useState({ email: "owner@sentinel.local", password: "" });
   const [overview, setOverview] = useState<Overview | null>(null);
   const [incidents, setIncidents] = useState<Incident[]>([]);
   const [requests, setRequests] = useState<RequestRecord[]>(demoRequests);
@@ -122,15 +153,19 @@ function App() {
   const [readiness, setReadiness] = useState<Readiness>(demoReadiness);
   const [systemMetrics, setSystemMetrics] = useState<SystemMetrics>(demoSystemMetrics);
   const [liveStatus, setLiveStatus] = useState("Connecting");
+  const selectedProject =
+    session.projects.find((project) => project.id === selectedProjectId) ?? session.projects[0];
 
   useEffect(() => {
+    if (!isAuthenticated) return;
+
     async function load() {
       try {
         const [overviewResponse, incidentResponse, readinessResponse, systemResponse] = await Promise.all([
-          fetch(`${apiBase}/v1/analytics/overview`),
-          fetch(`${apiBase}/v1/analytics/incidents`),
+          apiFetch("/v1/analytics/overview", selectedProjectId),
+          apiFetch("/v1/analytics/incidents", selectedProjectId),
           fetch(`${apiBase}/ready`),
-          fetch(`${apiBase}/v1/analytics/system`)
+          apiFetch("/v1/analytics/system", selectedProjectId)
         ]);
 
         if (
@@ -148,18 +183,19 @@ function App() {
         setSystemMetrics(await systemResponse.json());
         await loadRequests();
       } catch {
-        setOverview(demoOverview);
-        setIncidents(demoIncidents);
+        const demoData = getDemoProjectData(selectedProjectId);
+        setOverview(demoData.overview);
+        setIncidents(demoData.incidents);
         setReadiness(demoReadiness);
         setSystemMetrics(demoSystemMetrics);
-        setRequests(filterDemoRequests(requestFilters));
+        setRequests(filterDemoRequests(demoData.requests, requestFilters));
       }
     }
 
     void load();
     const interval = window.setInterval(() => void load(), 15000);
     return () => window.clearInterval(interval);
-  }, [requestFilters]);
+  }, [isAuthenticated, requestFilters, selectedProjectId]);
 
   async function loadRequests() {
     const params = new URLSearchParams();
@@ -170,12 +206,14 @@ function App() {
     if (requestFilters.query) params.set("q", requestFilters.query);
     params.set("limit", "50");
 
-    const response = await fetch(`${apiBase}/v1/analytics/requests?${params.toString()}`);
+    const response = await apiFetch(`/v1/analytics/requests?${params.toString()}`, selectedProjectId);
     if (!response.ok) throw new Error("requests_unavailable");
     setRequests(await response.json());
   }
 
   useEffect(() => {
+    if (!isAuthenticated) return;
+
     const liveUrl = apiBase.replace(/^http/, "ws") + "/live";
     const socket = new WebSocket(liveUrl);
 
@@ -184,7 +222,7 @@ function App() {
     socket.addEventListener("message", () => setLiveStatus("Event received"));
 
     return () => socket.close();
-  }, []);
+  }, [isAuthenticated]);
 
   const maxThreatScore = useMemo(() => {
     const endpointScores = overview?.endpoints.map((endpoint) => endpoint.max_threat_score) ?? [];
@@ -192,6 +230,20 @@ function App() {
     return Math.max(0, ...endpointScores, ...ipScores);
   }, [overview]);
   const header = getHeader(activeView);
+
+  if (!isAuthenticated) {
+    return (
+      <AuthScreen
+        form={authForm}
+        onChange={setAuthForm}
+        onSubmit={() => {
+          window.localStorage.setItem("sentinel.dashboard.session", "active");
+          window.localStorage.setItem("sentinel.dashboard.project", selectedProjectId);
+          setIsAuthenticated(true);
+        }}
+      />
+    );
+  }
 
   return (
     <main className="shell">
@@ -217,6 +269,16 @@ function App() {
             Sources
           </button>
         </nav>
+
+        <div className="operator-card">
+          <span>
+            <User size={16} />
+          </span>
+          <div>
+            <strong>{session.user.name}</strong>
+            <p>{selectedProject.role}</p>
+          </div>
+        </div>
       </aside>
 
       <section className="workspace">
@@ -225,9 +287,37 @@ function App() {
             <h1>{header.title}</h1>
             <p>{header.subtitle}</p>
           </div>
-          <div className={`live-pill ${liveStatus.toLowerCase().replace(/\s+/g, "-")}`}>
-            <Radio size={16} />
-            {liveStatus}
+          <div className="topbar-actions">
+            <label className="project-switcher">
+              <Building2 size={16} />
+              <select
+                value={selectedProjectId}
+                onChange={(event) => {
+                  window.localStorage.setItem("sentinel.dashboard.project", event.target.value);
+                  setSelectedProjectId(event.target.value);
+                }}
+              >
+                {session.projects.map((project) => (
+                  <option key={project.id} value={project.id}>
+                    {project.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className={`live-pill ${liveStatus.toLowerCase().replace(/\s+/g, "-")}`}>
+              <Radio size={16} />
+              {liveStatus}
+            </div>
+            <button
+              className="icon-button"
+              onClick={() => {
+                window.localStorage.removeItem("sentinel.dashboard.session");
+                setIsAuthenticated(false);
+              }}
+              title="Sign out"
+            >
+              <LogOut size={16} />
+            </button>
           </div>
         </header>
 
@@ -330,7 +420,11 @@ function App() {
             filters={requestFilters}
             requests={requests}
             onChange={setRequestFilters}
-            onRefresh={() => void loadRequests().catch(() => setRequests(filterDemoRequests(requestFilters)))}
+            onRefresh={() =>
+              void loadRequests().catch(() =>
+                setRequests(filterDemoRequests(getDemoProjectData(selectedProjectId).requests, requestFilters))
+              )
+            }
           />
         )}
 
@@ -345,6 +439,72 @@ function App() {
     url.searchParams.set("view", view);
     window.history.replaceState(null, "", url);
   }
+}
+
+function AuthScreen(props: {
+  form: { email: string; password: string };
+  onChange: (form: { email: string; password: string }) => void;
+  onSubmit: () => void;
+}) {
+  const canSubmit = props.form.email.length > 0 && props.form.password.length > 0;
+
+  return (
+    <main className="auth-shell">
+      <section className="auth-panel">
+        <div className="brand auth-brand">
+          <ShieldCheck size={30} />
+          <div>
+            <strong>Sentinel</strong>
+            <span>API Security</span>
+          </div>
+        </div>
+        <div>
+          <h1>Sign in to Sentinel</h1>
+          <p>Access the operator dashboard with project-scoped telemetry and incidents.</p>
+        </div>
+        <form
+          className="auth-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (canSubmit) props.onSubmit();
+          }}
+        >
+          <label>
+            Email
+            <input
+              type="email"
+              value={props.form.email}
+              onChange={(event) => props.onChange({ ...props.form, email: event.target.value })}
+              placeholder="owner@sentinel.local"
+            />
+          </label>
+          <label>
+            Password
+            <input
+              type="password"
+              value={props.form.password}
+              onChange={(event) => props.onChange({ ...props.form, password: event.target.value })}
+              placeholder="Enter a demo password"
+            />
+          </label>
+          <button disabled={!canSubmit}>
+            <KeyRound size={16} />
+            Sign in
+          </button>
+        </form>
+      </section>
+
+      <aside className="auth-context">
+        <span>
+          <Building2 size={18} />
+        </span>
+        <div>
+          <strong>Demo Organization</strong>
+          <p>Owner role, project memberships, and API key scoping are represented in the dashboard shell.</p>
+        </div>
+      </aside>
+    </main>
+  );
 }
 
 function Metric(props: { label: string; value: string | number; icon: React.ReactNode }) {
@@ -555,6 +715,46 @@ function shortTrace(traceId?: string) {
   return traceId ? traceId.slice(0, 8) : "N/A";
 }
 
+async function apiFetch(path: string, projectId: string) {
+  const url = new URL(path, apiBase);
+  if (!url.searchParams.has("projectId")) url.searchParams.set("projectId", projectId);
+
+  return fetch(url, {
+    headers: dashboardApiKey ? { "x-sentinel-api-key": dashboardApiKey } : undefined
+  });
+}
+
+function getDemoProjectData(projectId: string) {
+  if (projectId === "checkout") {
+    return {
+      overview: checkoutOverview,
+      incidents: checkoutIncidents,
+      requests: checkoutRequests
+    };
+  }
+
+  return {
+    overview: demoOverview,
+    incidents: demoIncidents,
+    requests: demoRequests
+  };
+}
+
+const demoSession: AuthSession = {
+  user: {
+    name: "Demo Owner",
+    email: "owner@sentinel.local"
+  },
+  organization: {
+    id: "demo-org",
+    name: "Demo Organization"
+  },
+  projects: [
+    { id: "demo", name: "Demo API", role: "owner" },
+    { id: "checkout", name: "Checkout API", role: "developer" }
+  ]
+};
+
 const demoOverview: Overview = {
   totals: {
     events: 12842,
@@ -727,8 +927,99 @@ const demoRequests: RequestRecord[] = [
   }
 ];
 
-function filterDemoRequests(filters: RequestFilters) {
-  return demoRequests.filter((request) => {
+const checkoutOverview: Overview = {
+  totals: {
+    events: 6421,
+    openIncidents: 2,
+    averageLatencyMs: 118
+  },
+  endpoints: [
+    {
+      method: "POST",
+      path: "/api/checkout",
+      requests: 1704,
+      latency: 124,
+      max_threat_score: 68
+    },
+    {
+      method: "POST",
+      path: "/api/payment-intents",
+      requests: 1388,
+      latency: 142,
+      max_threat_score: 73
+    },
+    {
+      method: "GET",
+      path: "/api/orders/:id",
+      requests: 2384,
+      latency: 52,
+      max_threat_score: 34
+    }
+  ],
+  ips: [
+    { ip: "203.0.113.88", requests: 402, max_threat_score: 73 },
+    { ip: "198.51.100.44", requests: 318, max_threat_score: 68 },
+    { ip: "192.0.2.18", requests: 121, max_threat_score: 24 }
+  ]
+};
+
+const checkoutIncidents: Incident[] = [
+  {
+    id: "SC-2210",
+    severity: "high",
+    title: "Payment authorization failures on POST /api/payment-intents",
+    description: "A concentrated source triggered repeated payment failures within a short window.",
+    affected_endpoint: "POST /api/payment-intents",
+    attacker_ips: ["203.0.113.88"],
+    request_count: 18,
+    status: "open",
+    started_at: new Date(Date.now() - 1000 * 60 * 16).toISOString(),
+    last_seen_at: new Date(Date.now() - 1000 * 60 * 3).toISOString(),
+    created_at: new Date(Date.now() - 1000 * 60 * 12).toISOString()
+  }
+];
+
+const checkoutRequests: RequestRecord[] = [
+  {
+    id: "checkout-1",
+    trace_id: "4123456789abcdef0123456789abcdef",
+    timestamp: new Date().toISOString(),
+    service_name: "checkout-api",
+    environment: "demo",
+    kind: "rest",
+    method: "POST",
+    path: "/api/payment-intents",
+    route: "/api/payment-intents",
+    ip: "203.0.113.88",
+    status_code: 402,
+    latency_ms: 142,
+    auth_present: true,
+    auth_failed: false,
+    threat_score: 73,
+    threat_severity: "high"
+  },
+  {
+    id: "checkout-2",
+    trace_id: "5123456789abcdef0123456789abcdef",
+    timestamp: new Date(Date.now() - 1000 * 36).toISOString(),
+    service_name: "checkout-api",
+    environment: "demo",
+    kind: "rest",
+    method: "POST",
+    path: "/api/checkout",
+    route: "/api/checkout",
+    ip: "198.51.100.44",
+    status_code: 429,
+    latency_ms: 118,
+    auth_present: true,
+    auth_failed: false,
+    threat_score: 68,
+    threat_severity: "high"
+  }
+];
+
+function filterDemoRequests(requests: RequestRecord[], filters: RequestFilters) {
+  return requests.filter((request) => {
     if (filters.method && request.method !== filters.method) return false;
     if (filters.status && request.status_code !== Number(filters.status)) return false;
     if (filters.ip && request.ip !== filters.ip) return false;
