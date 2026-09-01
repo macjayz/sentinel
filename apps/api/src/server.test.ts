@@ -7,14 +7,28 @@ const dbMocks = vi.hoisted(() => ({
     totals: { events: 0, openIncidents: 0, averageLatencyMs: 0 },
     endpoints: [],
     ips: []
-  }))
+  })),
+  listApiKeys: vi.fn(() => []),
+  createApiKey: vi.fn(() => ({
+    id: "key-1",
+    name: "Production SDK",
+    prefix: "sentinel_test",
+    key: "sentinel_test_secret",
+    created_at: new Date().toISOString(),
+    revoked_at: null,
+    last_used_at: null
+  })),
+  revokeApiKey: vi.fn(() => true)
 }));
 
 vi.mock("./db.js", () => ({
+  createApiKey: dbMocks.createApiKey,
   createPool: () => ({ end: vi.fn() }),
   getOverview: dbMocks.getOverview,
   getIncidents: () => [],
   getRequests: dbMocks.getRequests,
+  listApiKeys: dbMocks.listApiKeys,
+  revokeApiKey: dbMocks.revokeApiKey,
   resolveProjectForApiKey: (_pool: unknown, apiKey: string) =>
     apiKey === "dev-sentinel-key" ? { projectId: "demo", keyId: "test" } : null
 }));
@@ -111,6 +125,34 @@ describe("api server", () => {
     });
 
     expect(response.statusCode).toBe(401);
+    await app.close();
+  });
+
+  it("creates project-scoped api keys", async () => {
+    const { app } = await buildServer();
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/api-keys",
+      headers: { "x-sentinel-api-key": "dev-sentinel-key" },
+      payload: { name: "Production SDK" }
+    });
+
+    expect(response.statusCode).toBe(201);
+    expect(response.json().key).toBe("sentinel_test_secret");
+    expect(dbMocks.createApiKey).toHaveBeenCalledWith(expect.anything(), "demo", "Production SDK");
+    await app.close();
+  });
+
+  it("revokes project-scoped api keys", async () => {
+    const { app } = await buildServer();
+    const response = await app.inject({
+      method: "DELETE",
+      url: "/v1/api-keys/key-1",
+      headers: { "x-sentinel-api-key": "dev-sentinel-key" }
+    });
+
+    expect(response.statusCode).toBe(204);
+    expect(dbMocks.revokeApiKey).toHaveBeenCalledWith(expect.anything(), "demo", "key-1");
     await app.close();
   });
 });

@@ -23,4 +23,5 @@ Initial alpha release.
 - Added organization, user, role, membership, and project-scoped API key schema.
 - Added project-scope enforcement for ingestion and analytics queries.
 - Added dashboard sign-in shell, operator role display, and project switcher.
+- Added API key list, create, and revoke endpoints with dashboard key management UI.
 - Added CI, issue templates, contribution guide, security policy, roadmap, and dashboard screenshot.

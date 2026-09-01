@@ -1,5 +1,5 @@
 import pg from "pg";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { ApiConfig } from "./config.js";
 
 const { Pool } = pg;
@@ -151,4 +151,50 @@ export async function resolveProjectForApiKey(pool: pg.Pool, apiKey: string, fal
 
 export function hashApiKey(apiKey: string) {
   return createHash("sha256").update(apiKey).digest("hex");
+}
+
+export async function listApiKeys(pool: pg.Pool, projectId: string) {
+  const result = await pool.query(
+    `
+    select id, name, prefix, last_used_at, created_at, revoked_at
+    from api_keys
+    where project_id = $1
+    order by created_at desc
+    `,
+    [projectId]
+  );
+
+  return result.rows;
+}
+
+export async function createApiKey(pool: pg.Pool, projectId: string, name: string) {
+  const key = `sentinel_${randomBytes(24).toString("base64url")}`;
+  const prefix = key.slice(0, 17);
+  const result = await pool.query(
+    `
+    insert into api_keys (project_id, name, key_hash, prefix)
+    values ($1, $2, $3, $4)
+    returning id, name, prefix, last_used_at, created_at, revoked_at
+    `,
+    [projectId, name, hashApiKey(key), prefix]
+  );
+
+  return {
+    ...result.rows[0],
+    key
+  };
+}
+
+export async function revokeApiKey(pool: pg.Pool, projectId: string, keyId: string) {
+  const result = await pool.query(
+    `
+    update api_keys
+    set revoked_at = now()
+    where id = $1 and project_id = $2 and revoked_at is null
+    returning id
+    `,
+    [keyId, projectId]
+  );
+
+  return (result.rowCount ?? 0) > 0;
 }

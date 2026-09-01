@@ -264,6 +264,11 @@ h2 {
   margin-bottom: 16px;
 }
 
+h3 {
+  font-size: 15px;
+  margin: 0;
+}
+
 .live-pill {
   align-items: center;
   border-radius: 999px;
@@ -449,6 +454,124 @@ th {
   width: 42px;
 }
 
+.primary-action,
+.danger-button {
+  align-items: center;
+  border: 0;
+  border-radius: 8px;
+  cursor: pointer;
+  display: flex;
+  font: inherit;
+  font-weight: 700;
+  gap: 8px;
+  justify-content: center;
+}
+
+.primary-action {
+  background: #101820;
+  color: #ffffff;
+  height: 40px;
+  padding: 0 14px;
+}
+
+.primary-action:disabled,
+.danger-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.danger-button {
+  background: #ffe5e5;
+  color: #a51d1d;
+  min-height: 34px;
+  padding: 0 10px;
+}
+
+.key-layout {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: minmax(280px, 0.85fr) 1.15fr;
+  margin-bottom: 18px;
+}
+
+.key-create,
+.sdk-snippet {
+  border: 1px solid #e7ebef;
+  border-radius: 8px;
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+}
+
+.key-create p,
+.sdk-snippet p {
+  color: #687789;
+  margin-top: 4px;
+}
+
+.key-create label {
+  color: #536273;
+  display: grid;
+  font-size: 13px;
+  font-weight: 600;
+  gap: 6px;
+}
+
+.key-create input {
+  border: 1px solid #d9e0e7;
+  border-radius: 8px;
+  font: inherit;
+  height: 40px;
+  padding: 0 10px;
+}
+
+.key-secret {
+  align-items: center;
+  background: #eef2f6;
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: auto 1fr 42px;
+  padding: 10px;
+}
+
+.key-secret span {
+  color: #536273;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+code,
+pre {
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+}
+
+.key-secret code {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sdk-snippet pre {
+  background: #101820;
+  border-radius: 8px;
+  color: #e5edf5;
+  font-size: 13px;
+  line-height: 1.6;
+  margin: 0;
+  overflow-x: auto;
+  padding: 14px;
+}
+
+.key-table {
+  overflow-x: auto;
+}
+
+.key-table table {
+  min-width: 760px;
+}
+
 .request-table {
   overflow-x: auto;
 }
@@ -615,11 +738,12 @@ time {
   .metrics,
   .system-strip,
   .filters,
-  .grid {
+  .grid,
+  .key-layout {
     grid-template-columns: 1fr;
   }
 
-  .icon-button {
+  .filters .icon-button {
     width: 100%;
   }
 }

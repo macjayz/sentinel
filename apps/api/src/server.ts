@@ -1,13 +1,17 @@
 import cors from "@fastify/cors";
 import rateLimit from "@fastify/rate-limit";
 import Fastify from "fastify";
+import { z } from "zod";
 import { EventBatchSchema, withSpan } from "@sentinel/shared";
 import { loadConfig } from "./config.js";
 import {
+  createApiKey,
   createPool,
   getIncidents,
   getOverview,
   getRequests,
+  listApiKeys,
+  revokeApiKey,
   resolveProjectForApiKey
 } from "./db.js";
 import { attachLiveServer } from "./live.js";
@@ -119,6 +123,35 @@ export async function buildServer() {
     buildMetricsSnapshot(metrics, pool, redis, config.streamName, liveHub)
   );
 
+  app.get("/v1/api-keys", async (request, reply) => {
+    const scope = await getAnalyticsProjectScope(pool, config.sentinelApiKey, request.headers["x-sentinel-api-key"]);
+    if (!scope) return reply.code(401).send({ error: "invalid_api_key" });
+    return listApiKeys(pool, scope.projectId);
+  });
+
+  app.post("/v1/api-keys", async (request, reply) => {
+    const scope = await getAnalyticsProjectScope(pool, config.sentinelApiKey, request.headers["x-sentinel-api-key"]);
+    if (!scope) return reply.code(401).send({ error: "invalid_api_key" });
+
+    const parsed = CreateApiKeySchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: "invalid_api_key_payload", details: parsed.error.flatten() });
+    }
+
+    const key = await createApiKey(pool, scope.projectId, parsed.data.name);
+    return reply.code(201).send(key);
+  });
+
+  app.delete("/v1/api-keys/:id", async (request, reply) => {
+    const scope = await getAnalyticsProjectScope(pool, config.sentinelApiKey, request.headers["x-sentinel-api-key"]);
+    if (!scope) return reply.code(401).send({ error: "invalid_api_key" });
+
+    const { id } = request.params as { id: string };
+    const revoked = await revokeApiKey(pool, scope.projectId, id);
+    if (!revoked) return reply.code(404).send({ error: "api_key_not_found" });
+    return reply.code(204).send();
+  });
+
   app.addHook("onClose", async () => {
     liveHub.close();
     await redis.quit();
@@ -127,6 +160,10 @@ export async function buildServer() {
 
   return { app, config };
 }
+
+const CreateApiKeySchema = z.object({
+  name: z.string().trim().min(2).max(80)
+});
 
 async function getAnalyticsProjectScope(
   pool: ReturnType<typeof createPool>,

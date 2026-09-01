@@ -55,6 +55,8 @@ create table if not exists api_keys (
   revoked_at timestamptz
 );
 
+create index if not exists api_keys_project_id_idx on api_keys(project_id);
+
 create table if not exists api_events (
   id text primary key,
   trace_id text,

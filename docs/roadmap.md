@@ -15,12 +15,13 @@
 - OpenTelemetry span hooks and trace IDs across the Sentinel pipeline
 - Organization, user, membership, role, and project-scoped API key foundation
 - Dashboard sign-in shell, operator role context, and project switcher
+- API key list, create, and revoke workflows
 
 ## v0.2 Product Hardening
 
 - Project management UI
 - Backed password sessions for the dashboard
-- API key rotation
+- API key rotation and scoped permissions
 - SDK retry backoff controls
 - Worker dead-letter stream
 - Endpoint trend charts

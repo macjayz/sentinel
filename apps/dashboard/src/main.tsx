@@ -5,16 +5,19 @@ import {
   AlertTriangle,
   Building2,
   Clock,
+  Copy,
   Database,
   Filter,
   Gauge,
   Globe2,
   KeyRound,
   LogOut,
+  Plus,
   Radio,
   RefreshCcw,
   Search,
   ShieldCheck,
+  Trash2,
   User
 } from "lucide-react";
 import "./styles.css";
@@ -107,6 +110,18 @@ type RequestFilters = {
   query: string;
 };
 
+type ApiKeyRecord = {
+  id: string;
+  name: string;
+  prefix: string;
+  key?: string;
+  last_used_at?: string | null;
+  created_at: string;
+  revoked_at?: string | null;
+};
+
+type DashboardView = "overview" | "requests" | "incidents" | "api-keys";
+
 type ProjectOption = {
   id: string;
   name: string;
@@ -129,7 +144,7 @@ const apiBase = import.meta.env.VITE_SENTINEL_API_URL ?? "http://localhost:8080"
 const dashboardApiKey = import.meta.env.VITE_SENTINEL_API_KEY;
 
 function App() {
-  const [activeView, setActiveView] = useState<"overview" | "requests" | "incidents">(
+  const [activeView, setActiveView] = useState<DashboardView>(
     getInitialView()
   );
   const [isAuthenticated, setIsAuthenticated] = useState(
@@ -143,6 +158,9 @@ function App() {
   const [overview, setOverview] = useState<Overview | null>(null);
   const [incidents, setIncidents] = useState<Incident[]>([]);
   const [requests, setRequests] = useState<RequestRecord[]>(demoRequests);
+  const [apiKeys, setApiKeys] = useState<ApiKeyRecord[]>(demoApiKeys);
+  const [newKeyName, setNewKeyName] = useState("Production SDK");
+  const [newKeySecret, setNewKeySecret] = useState("");
   const [requestFilters, setRequestFilters] = useState<RequestFilters>({
     method: "",
     status: "",
@@ -161,18 +179,20 @@ function App() {
 
     async function load() {
       try {
-        const [overviewResponse, incidentResponse, readinessResponse, systemResponse] = await Promise.all([
+        const [overviewResponse, incidentResponse, readinessResponse, systemResponse, apiKeysResponse] = await Promise.all([
           apiFetch("/v1/analytics/overview", selectedProjectId),
           apiFetch("/v1/analytics/incidents", selectedProjectId),
           fetch(`${apiBase}/ready`),
-          apiFetch("/v1/analytics/system", selectedProjectId)
+          apiFetch("/v1/analytics/system", selectedProjectId),
+          apiFetch("/v1/api-keys", selectedProjectId)
         ]);
 
         if (
           !overviewResponse.ok ||
           !incidentResponse.ok ||
           !readinessResponse.ok ||
-          !systemResponse.ok
+          !systemResponse.ok ||
+          !apiKeysResponse.ok
         ) {
           throw new Error("analytics_unavailable");
         }
@@ -181,6 +201,7 @@ function App() {
         setIncidents(await incidentResponse.json());
         setReadiness(await readinessResponse.json());
         setSystemMetrics(await systemResponse.json());
+        setApiKeys(await apiKeysResponse.json());
         await loadRequests();
       } catch {
         const demoData = getDemoProjectData(selectedProjectId);
@@ -189,6 +210,7 @@ function App() {
         setReadiness(demoReadiness);
         setSystemMetrics(demoSystemMetrics);
         setRequests(filterDemoRequests(demoData.requests, requestFilters));
+        setApiKeys(demoData.apiKeys);
       }
     }
 
@@ -196,6 +218,36 @@ function App() {
     const interval = window.setInterval(() => void load(), 15000);
     return () => window.clearInterval(interval);
   }, [isAuthenticated, requestFilters, selectedProjectId]);
+
+  async function createDashboardApiKey() {
+    try {
+      const response = await apiFetch("/v1/api-keys", selectedProjectId, {
+        method: "POST",
+        body: JSON.stringify({ name: newKeyName })
+      });
+      if (!response.ok) throw new Error("key_create_failed");
+      const key = (await response.json()) as ApiKeyRecord;
+      setApiKeys((current) => [key, ...current]);
+      setNewKeySecret(key.key ?? "");
+    } catch {
+      const key = createDemoApiKey(newKeyName);
+      setApiKeys((current) => [key, ...current]);
+      setNewKeySecret(key.key ?? "");
+    }
+  }
+
+  async function revokeDashboardApiKey(keyId: string) {
+    try {
+      const response = await apiFetch(`/v1/api-keys/${keyId}`, selectedProjectId, { method: "DELETE" });
+      if (!response.ok) throw new Error("key_revoke_failed");
+    } catch {
+      // Offline demo mode keeps the interaction local while Docker is unavailable.
+    }
+
+    setApiKeys((current) =>
+      current.map((key) => (key.id === keyId ? { ...key, revoked_at: new Date().toISOString() } : key))
+    );
+  }
 
   async function loadRequests() {
     const params = new URLSearchParams();
@@ -264,6 +316,9 @@ function App() {
           </button>
           <button className={activeView === "incidents" ? "active" : ""} onClick={() => changeView("incidents")}>
             Incidents
+          </button>
+          <button className={activeView === "api-keys" ? "active" : ""} onClick={() => changeView("api-keys")}>
+            API Keys
           </button>
           <button className="disabled" disabled>
             Sources
@@ -429,11 +484,23 @@ function App() {
         )}
 
         {activeView === "incidents" && <IncidentPanel incidents={incidents} />}
+
+        {activeView === "api-keys" && (
+          <ApiKeyPanel
+            apiKeys={apiKeys}
+            keyName={newKeyName}
+            keySecret={newKeySecret}
+            selectedProject={selectedProject}
+            onKeyNameChange={setNewKeyName}
+            onCreate={() => void createDashboardApiKey()}
+            onRevoke={(keyId) => void revokeDashboardApiKey(keyId)}
+          />
+        )}
       </section>
     </main>
   );
 
-  function changeView(view: "overview" | "requests" | "incidents") {
+  function changeView(view: DashboardView) {
     setActiveView(view);
     const url = new URL(window.location.href);
     url.searchParams.set("view", view);
@@ -652,6 +719,98 @@ function IncidentPanel(props: { incidents: Incident[] }) {
   );
 }
 
+function ApiKeyPanel(props: {
+  apiKeys: ApiKeyRecord[];
+  keyName: string;
+  keySecret: string;
+  selectedProject: ProjectOption;
+  onKeyNameChange: (name: string) => void;
+  onCreate: () => void;
+  onRevoke: (keyId: string) => void;
+}) {
+  return (
+    <Panel title="API Key Management">
+      <div className="key-layout">
+        <section className="key-create">
+          <div>
+            <h3>Create project key</h3>
+            <p>Generate a scoped SDK key for {props.selectedProject.name}.</p>
+          </div>
+          <label>
+            Key name
+            <input value={props.keyName} onChange={(event) => props.onKeyNameChange(event.target.value)} />
+          </label>
+          <button className="primary-action" onClick={props.onCreate} disabled={props.keyName.trim().length < 2}>
+            <Plus size={16} />
+            Create key
+          </button>
+          {props.keySecret && (
+            <div className="key-secret">
+              <span>New key</span>
+              <code>{props.keySecret}</code>
+              <button
+                className="icon-button"
+                onClick={() => void navigator.clipboard?.writeText(props.keySecret)}
+                title="Copy new key"
+              >
+                <Copy size={16} />
+              </button>
+            </div>
+          )}
+        </section>
+
+        <section className="sdk-snippet">
+          <h3>SDK setup</h3>
+          <pre>{`sentinelExpress({
+  projectId: "${props.selectedProject.id}",
+  apiKey: process.env.SENTINEL_API_KEY,
+  endpoint: "http://localhost:8080"
+});`}</pre>
+        </section>
+      </div>
+
+      <div className="key-table">
+        <table>
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Prefix</th>
+              <th>Status</th>
+              <th>Last Used</th>
+              <th>Created</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {props.apiKeys.map((key) => (
+              <tr key={key.id}>
+                <td>{key.name}</td>
+                <td>
+                  <code>{key.prefix}</code>
+                </td>
+                <td>{key.revoked_at ? "Revoked" : "Active"}</td>
+                <td>{key.last_used_at ? new Date(key.last_used_at).toLocaleString() : "Never"}</td>
+                <td>{new Date(key.created_at).toLocaleDateString()}</td>
+                <td>
+                  <button
+                    className="danger-button"
+                    onClick={() => props.onRevoke(key.id)}
+                    disabled={Boolean(key.revoked_at)}
+                    title="Revoke API key"
+                  >
+                    <Trash2 size={15} />
+                    Revoke
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </Panel>
+  );
+}
+
 function StatusItem(props: {
   label: string;
   value: string | number;
@@ -679,12 +838,12 @@ function formatCount(value: number) {
   return value < 0 ? "N/A" : value;
 }
 
-function getInitialView(): "overview" | "requests" | "incidents" {
+function getInitialView(): DashboardView {
   const view = new URLSearchParams(window.location.search).get("view");
-  return view === "requests" || view === "incidents" ? view : "overview";
+  return view === "requests" || view === "incidents" || view === "api-keys" ? view : "overview";
 }
 
-function getHeader(view: "overview" | "requests" | "incidents") {
+function getHeader(view: DashboardView) {
   if (view === "requests") {
     return {
       title: "Request Explorer",
@@ -696,6 +855,13 @@ function getHeader(view: "overview" | "requests" | "incidents") {
     return {
       title: "Incidents",
       subtitle: "Review grouped security events and their current severity."
+    };
+  }
+
+  if (view === "api-keys") {
+    return {
+      title: "API Keys",
+      subtitle: "Create and revoke project-scoped SDK credentials."
     };
   }
 
@@ -715,12 +881,17 @@ function shortTrace(traceId?: string) {
   return traceId ? traceId.slice(0, 8) : "N/A";
 }
 
-async function apiFetch(path: string, projectId: string) {
+async function apiFetch(path: string, projectId: string, init: RequestInit = {}) {
   const url = new URL(path, apiBase);
   if (!url.searchParams.has("projectId")) url.searchParams.set("projectId", projectId);
 
   return fetch(url, {
-    headers: dashboardApiKey ? { "x-sentinel-api-key": dashboardApiKey } : undefined
+    ...init,
+    headers: {
+      ...(init.body ? { "content-type": "application/json" } : {}),
+      ...(dashboardApiKey ? { "x-sentinel-api-key": dashboardApiKey } : {}),
+      ...init.headers
+    }
   });
 }
 
@@ -729,14 +900,32 @@ function getDemoProjectData(projectId: string) {
     return {
       overview: checkoutOverview,
       incidents: checkoutIncidents,
-      requests: checkoutRequests
+      requests: checkoutRequests,
+      apiKeys: checkoutApiKeys
     };
   }
 
   return {
     overview: demoOverview,
     incidents: demoIncidents,
-    requests: demoRequests
+    requests: demoRequests,
+    apiKeys: demoApiKeys
+  };
+}
+
+function createDemoApiKey(name: string): ApiKeyRecord {
+  const suffix = Array.from(crypto.getRandomValues(new Uint8Array(6)))
+    .map((value) => value.toString(16).padStart(2, "0"))
+    .join("");
+
+  return {
+    id: `demo-key-${suffix}`,
+    name,
+    prefix: `sentinel_${suffix.slice(0, 8)}`,
+    key: `sentinel_demo_${suffix}`,
+    created_at: new Date().toISOString(),
+    last_used_at: null,
+    revoked_at: null
   };
 }
 
@@ -927,6 +1116,25 @@ const demoRequests: RequestRecord[] = [
   }
 ];
 
+const demoApiKeys: ApiKeyRecord[] = [
+  {
+    id: "demo-key-primary",
+    name: "Production SDK",
+    prefix: "sentinel_prod",
+    created_at: new Date(Date.now() - 1000 * 60 * 60 * 24 * 4).toISOString(),
+    last_used_at: new Date(Date.now() - 1000 * 60 * 11).toISOString(),
+    revoked_at: null
+  },
+  {
+    id: "demo-key-ci",
+    name: "CI Smoke Tests",
+    prefix: "sentinel_ci",
+    created_at: new Date(Date.now() - 1000 * 60 * 60 * 24 * 18).toISOString(),
+    last_used_at: null,
+    revoked_at: null
+  }
+];
+
 const checkoutOverview: Overview = {
   totals: {
     events: 6421,
@@ -1015,6 +1223,17 @@ const checkoutRequests: RequestRecord[] = [
     auth_failed: false,
     threat_score: 68,
     threat_severity: "high"
+  }
+];
+
+const checkoutApiKeys: ApiKeyRecord[] = [
+  {
+    id: "checkout-key-web",
+    name: "Checkout API SDK",
+    prefix: "sentinel_pay",
+    created_at: new Date(Date.now() - 1000 * 60 * 60 * 24 * 6).toISOString(),
+    last_used_at: new Date(Date.now() - 1000 * 60 * 27).toISOString(),
+    revoked_at: null
   }
 ];
 
