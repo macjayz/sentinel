@@ -12,6 +12,7 @@
 - Health, readiness, and runtime metrics
 - Request explorer with method, status, IP, path, and threat filters
 - Grouped security incidents with affected endpoint, attacker IPs, duration, and request count
+- OpenTelemetry span hooks and trace IDs across the Sentinel pipeline
 
 ## v0.2 Product Hardening
 

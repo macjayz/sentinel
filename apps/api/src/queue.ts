@@ -1,5 +1,5 @@
 import { Redis } from "ioredis";
-import { SentinelEvent } from "@sentinel/shared";
+import { SentinelEvent, withSpan } from "@sentinel/shared";
 import { ApiConfig } from "./config.js";
 
 export function createRedis(config: ApiConfig) {
@@ -7,11 +7,20 @@ export function createRedis(config: ApiConfig) {
 }
 
 export async function enqueueEvents(redis: Redis, streamName: string, events: SentinelEvent[]) {
-  const pipeline = redis.pipeline();
+  return withSpan(
+    "sentinel.redis.enqueue_events",
+    {
+      "sentinel.stream": streamName,
+      "sentinel.events.count": events.length
+    },
+    async () => {
+      const pipeline = redis.pipeline();
 
-  for (const event of events) {
-    pipeline.xadd(streamName, "*", "event", JSON.stringify(event));
-  }
+      for (const event of events) {
+        pipeline.xadd(streamName, "*", "event", JSON.stringify(event));
+      }
 
-  await pipeline.exec();
+      await pipeline.exec();
+    }
+  );
 }

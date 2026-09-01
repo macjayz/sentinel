@@ -1,3 +1,4 @@
+import { context, SpanStatusCode, trace, type AttributeValue } from "@opentelemetry/api";
 import { z } from "zod";
 
 export const HttpMethodSchema = z.enum([
@@ -14,6 +15,8 @@ export const TrafficKindSchema = z.enum(["rest", "graphql", "evm_rpc", "websocke
 
 export const SentinelEventSchema = z.object({
   id: z.string().min(8),
+  traceId: z.string().regex(/^[0-9a-f]{32}$/i).optional(),
+  parentSpanId: z.string().regex(/^[0-9a-f]{16}$/i).optional(),
   projectId: z.string().min(1),
   serviceName: z.string().min(1),
   environment: z.string().default("development"),
@@ -153,6 +156,36 @@ export type ThreatAssessment = {
   severity: "low" | "medium" | "high" | "critical";
   signals: ThreatSignal[];
 };
+
+export type TraceAttributes = Record<string, AttributeValue | undefined>;
+
+export async function withSpan<T>(
+  name: string,
+  attributes: TraceAttributes,
+  operation: () => Promise<T>
+): Promise<T> {
+  const tracer = trace.getTracer("sentinel");
+  const span = tracer.startSpan(name);
+
+  for (const [key, value] of Object.entries(attributes)) {
+    if (value !== undefined) span.setAttribute(key, value);
+  }
+
+  try {
+    const result = await context.with(trace.setSpan(context.active(), span), operation);
+    span.setStatus({ code: SpanStatusCode.OK });
+    return result;
+  } catch (error) {
+    span.recordException(error as Error);
+    span.setStatus({
+      code: SpanStatusCode.ERROR,
+      message: error instanceof Error ? error.message : "unknown_error"
+    });
+    throw error;
+  } finally {
+    span.end();
+  }
+}
 
 export function assessThreat(event: SentinelEvent, recentIpRequestCount = 0): ThreatAssessment {
   const signals: ThreatSignal[] = [];

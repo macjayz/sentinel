@@ -95,6 +95,7 @@ function httpEvent(input: {
 }): SentinelEvent {
   return {
     id: randomUUID(),
+    traceId: randomBytesHex(16),
     projectId,
     serviceName,
     environment: "demo",
@@ -158,4 +159,8 @@ function chunk<T>(items: T[], size: number): T[][] {
     batches.push(items.slice(index, index + size));
   }
   return batches;
+}
+
+function randomBytesHex(length: number) {
+  return randomUUID().replace(/-/g, "").slice(0, length * 2);
 }

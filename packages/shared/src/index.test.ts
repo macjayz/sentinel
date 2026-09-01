@@ -42,6 +42,7 @@ describe("shared security helpers", () => {
   it("scores high-risk rpc requests", () => {
     const event: SentinelEvent = {
       id: "event-123",
+      traceId: "0123456789abcdef0123456789abcdef",
       projectId: "project",
       serviceName: "api",
       environment: "test",

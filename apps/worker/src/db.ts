@@ -1,5 +1,5 @@
 import pg from "pg";
-import { SentinelEvent, ThreatAssessment } from "@sentinel/shared";
+import { SentinelEvent, ThreatAssessment, withSpan } from "@sentinel/shared";
 import { WorkerConfig } from "./config.js";
 import { fingerprintIncident } from "./incidents.js";
 
@@ -24,49 +24,61 @@ export async function countRecentIpRequests(pool: pg.Pool, projectId: string, ip
 }
 
 export async function persistEvent(pool: pg.Pool, event: SentinelEvent, assessment: ThreatAssessment) {
-  await pool.query(
-    `
+  await withSpan(
+    "sentinel.postgres.persist_event",
+    {
+      "sentinel.event_id": event.id,
+      "sentinel.trace_id": event.traceId,
+      "sentinel.project_id": event.projectId
+    },
+    async () => {
+      await pool.query(
+        `
     insert into api_events (
-      id, project_id, service_name, environment, timestamp, kind, method, path, route, ip,
+      id, trace_id, parent_span_id, project_id, service_name, environment, timestamp, kind, method, path, route, ip,
       user_agent, request_headers, request_query, request_body, status_code, latency_ms,
       body_bytes, auth_present, auth_failed, graphql_operation_name, graphql_operation_type,
       evm_rpc_method, threat_score, threat_severity, threat_signals
     )
     values (
-      $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-      $11, $12, $13, $14, $15, $16,
-      $17, $18, $19, $20, $21,
-      $22, $23, $24, $25
+      $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
+      $13, $14, $15, $16, $17, $18,
+      $19, $20, $21, $22, $23,
+      $24, $25, $26, $27
     )
     on conflict (id) do nothing
     `,
-    [
-      event.id,
-      event.projectId,
-      event.serviceName,
-      event.environment,
-      event.timestamp,
-      event.kind,
-      event.request.method,
-      event.request.path,
-      event.request.route,
-      event.request.ip,
-      event.request.userAgent,
-      event.request.headers,
-      event.request.query,
-      event.request.body ?? null,
-      event.response.statusCode,
-      event.response.latencyMs,
-      event.response.bodyBytes ?? null,
-      event.request.auth.present,
-      event.request.auth.failed,
-      event.graphQL?.operationName,
-      event.graphQL?.operationType,
-      event.evmRpc?.method,
-      assessment.score,
-      assessment.severity,
-      assessment.signals
-    ]
+        [
+          event.id,
+          event.traceId,
+          event.parentSpanId,
+          event.projectId,
+          event.serviceName,
+          event.environment,
+          event.timestamp,
+          event.kind,
+          event.request.method,
+          event.request.path,
+          event.request.route,
+          event.request.ip,
+          event.request.userAgent,
+          event.request.headers,
+          event.request.query,
+          event.request.body ?? null,
+          event.response.statusCode,
+          event.response.latencyMs,
+          event.response.bodyBytes ?? null,
+          event.request.auth.present,
+          event.request.auth.failed,
+          event.graphQL?.operationName,
+          event.graphQL?.operationType,
+          event.evmRpc?.method,
+          assessment.score,
+          assessment.severity,
+          assessment.signals
+        ]
+      );
+    }
   );
 }
 

@@ -96,7 +96,7 @@ export async function getRequests(pool: pg.Pool, filters: RequestFilters = {}) {
 
   const result = await pool.query(
     `
-    select id, timestamp, service_name, environment, kind, method, path, route, ip, user_agent,
+    select id, trace_id, parent_span_id, timestamp, service_name, environment, kind, method, path, route, ip, user_agent,
            status_code, latency_ms, body_bytes, auth_present, auth_failed,
            graphql_operation_name, graphql_operation_type, evm_rpc_method,
            threat_score, threat_severity

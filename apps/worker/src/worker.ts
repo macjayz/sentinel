@@ -1,5 +1,5 @@
 import { Redis } from "ioredis";
-import { assessThreat, SentinelEventSchema } from "@sentinel/shared";
+import { assessThreat, SentinelEventSchema, withSpan } from "@sentinel/shared";
 import { loadConfig } from "./config.js";
 import { countRecentIpRequests, createIncidentIfNeeded, createPool, persistEvent } from "./db.js";
 
@@ -37,14 +37,25 @@ export async function runWorker() {
         const parsed = SentinelEventSchema.safeParse(JSON.parse(eventJson));
 
         if (parsed.success) {
-          const recentIpRequests = await countRecentIpRequests(
-            pool,
-            parsed.data.projectId,
-            parsed.data.request.ip
+          await withSpan(
+            "sentinel.worker.process_event",
+            {
+              "sentinel.event_id": parsed.data.id,
+              "sentinel.trace_id": parsed.data.traceId,
+              "sentinel.project_id": parsed.data.projectId,
+              "sentinel.kind": parsed.data.kind
+            },
+            async () => {
+              const recentIpRequests = await countRecentIpRequests(
+                pool,
+                parsed.data.projectId,
+                parsed.data.request.ip
+              );
+              const assessment = assessThreat(parsed.data, recentIpRequests);
+              await persistEvent(pool, parsed.data, assessment);
+              await createIncidentIfNeeded(pool, parsed.data, assessment);
+            }
           );
-          const assessment = assessThreat(parsed.data, recentIpRequests);
-          await persistEvent(pool, parsed.data, assessment);
-          await createIncidentIfNeeded(pool, parsed.data, assessment);
         }
 
         await redis.xack(config.streamName, config.groupName, messageId);

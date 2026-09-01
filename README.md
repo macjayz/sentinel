@@ -17,6 +17,7 @@ Sentinel v0 targets:
 - REST and GraphQL request monitoring
 - Ethereum/EVM JSON-RPC monitoring
 - Request and response metadata
+- Trace IDs for request correlation
 - Latency, error, endpoint, IP, and authentication failure tracking
 - Configurable sensitive-field redaction
 - Abnormal request-rate detection
@@ -130,6 +131,12 @@ Operational endpoints:
 - `GET /metrics`: Prometheus-style Sentinel runtime metrics
 - `GET /v1/analytics/system`: JSON system metrics for the dashboard
 - `GET /v1/analytics/requests`: recent request explorer data with method, status, IP, path, and threat filters
+
+Tracing:
+
+- SDK events include a `traceId`.
+- Ingestion, Redis enqueue, worker processing, PostgreSQL writes, and WebSocket fanout are wrapped in OpenTelemetry spans.
+- Exporters are intentionally left to deployers so self-hosters can connect Sentinel to their own collector.
 
 ## Example SDK Usage
 

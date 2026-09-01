@@ -5,7 +5,7 @@
   "description": "Self-hosted API security and observability platform.",
   "type": "module",
   "scripts": {
-    "build": "npm run build --workspaces --if-present",
+    "build": "npm run build -w packages/shared && npm run build --workspaces --if-present",
     "dev": "concurrently \"npm run dev -w apps/api\" \"npm run dev -w apps/worker\" \"npm run dev -w apps/dashboard\"",
     "seed:demo": "tsx scripts/seed-demo-events.ts",
     "lint": "eslint .",

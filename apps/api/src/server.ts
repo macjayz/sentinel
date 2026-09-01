@@ -1,7 +1,7 @@
 import cors from "@fastify/cors";
 import rateLimit from "@fastify/rate-limit";
 import Fastify from "fastify";
-import { EventBatchSchema } from "@sentinel/shared";
+import { EventBatchSchema, withSpan } from "@sentinel/shared";
 import { loadConfig } from "./config.js";
 import { createPool, getIncidents, getOverview, getRequests } from "./db.js";
 import { attachLiveServer } from "./live.js";
@@ -56,17 +56,26 @@ export async function buildServer() {
   });
 
   app.post("/v1/events", async (request, reply) => {
-    const parsed = EventBatchSchema.safeParse(request.body);
-    if (!parsed.success) {
-      metrics.failedIngestionBatches += 1;
-      return reply.code(400).send({ error: "invalid_event_batch", details: parsed.error.flatten() });
-    }
+    return withSpan(
+      "sentinel.ingestion.accept_batch",
+      {
+        "http.request_id": request.id,
+        "http.route": "/v1/events"
+      },
+      async () => {
+        const parsed = EventBatchSchema.safeParse(request.body);
+        if (!parsed.success) {
+          metrics.failedIngestionBatches += 1;
+          return reply.code(400).send({ error: "invalid_event_batch", details: parsed.error.flatten() });
+        }
 
-    await enqueueEvents(redis, config.streamName, parsed.data.events);
-    metrics.ingestionBatches += 1;
-    metrics.ingestionEvents += parsed.data.events.length;
-    liveHub.publish("events.accepted", { count: parsed.data.events.length });
-    return reply.code(202).send({ accepted: parsed.data.events.length });
+        await enqueueEvents(redis, config.streamName, parsed.data.events);
+        metrics.ingestionBatches += 1;
+        metrics.ingestionEvents += parsed.data.events.length;
+        liveHub.publish("events.accepted", { count: parsed.data.events.length });
+        return reply.code(202).send({ accepted: parsed.data.events.length });
+      }
+    );
   });
 
   app.get("/v1/analytics/overview", async () => getOverview(pool));

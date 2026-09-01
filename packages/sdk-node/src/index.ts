@@ -1,5 +1,5 @@
 import type { NextFunction, Request, Response } from "express";
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import {
   classifyTraffic,
   EventBatch,
@@ -46,8 +46,10 @@ export function sentinelExpress(options: SentinelMiddlewareOptions) {
       const headers = normalizeHeaders(req.headers);
       const authHeader = headers.authorization;
       const route = req.route?.path ? String(req.route.path) : normalizeRoutePath(req.path);
+      const traceId = getTraceId(req);
       const event: SentinelEvent = {
         id: randomUUID(),
+        traceId,
         projectId: options.projectId,
         serviceName: options.serviceName,
         environment: options.environment ?? process.env.NODE_ENV ?? "development",
@@ -91,6 +93,12 @@ export function sentinelExpress(options: SentinelMiddlewareOptions) {
 
     next();
   };
+}
+
+function getTraceId(req: Request) {
+  const existing = req.headers["x-sentinel-trace-id"];
+  if (typeof existing === "string" && /^[0-9a-f]{32}$/i.test(existing)) return existing;
+  return randomBytes(16).toString("hex");
 }
 
 export class SentinelClient {

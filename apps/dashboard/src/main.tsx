@@ -72,6 +72,8 @@ type SystemMetrics = {
 
 type RequestRecord = {
   id: string;
+  trace_id?: string;
+  parent_span_id?: string;
   timestamp: string;
   service_name: string;
   environment: string;
@@ -431,6 +433,7 @@ function RequestExplorer(props: {
               <th>Latency</th>
               <th>IP</th>
               <th>Kind</th>
+              <th>Trace</th>
               <th>Threat</th>
             </tr>
           </thead>
@@ -451,6 +454,7 @@ function RequestExplorer(props: {
                 <td>{request.latency_ms}ms</td>
                 <td>{request.ip ?? "N/A"}</td>
                 <td>{request.kind}</td>
+                <td>{shortTrace(request.trace_id)}</td>
                 <td>
                   <meter min="0" max="100" value={request.threat_score} />
                   <span>{request.threat_score}</span>
@@ -545,6 +549,10 @@ function formatIps(ips?: string[]) {
   if (!ips || ips.length === 0) return "No source IP";
   if (ips.length === 1) return ips[0];
   return `${ips.length} source IPs`;
+}
+
+function shortTrace(traceId?: string) {
+  return traceId ? traceId.slice(0, 8) : "N/A";
 }
 
 const demoOverview: Overview = {
@@ -643,6 +651,7 @@ const demoSystemMetrics: SystemMetrics = {
 const demoRequests: RequestRecord[] = [
   {
     id: "req-1",
+    trace_id: "0123456789abcdef0123456789abcdef",
     timestamp: new Date().toISOString(),
     service_name: "demo-api",
     environment: "demo",
@@ -661,6 +670,7 @@ const demoRequests: RequestRecord[] = [
   },
   {
     id: "req-2",
+    trace_id: "1123456789abcdef0123456789abcdef",
     timestamp: new Date(Date.now() - 1000 * 45).toISOString(),
     service_name: "demo-api",
     environment: "demo",
@@ -679,6 +689,7 @@ const demoRequests: RequestRecord[] = [
   },
   {
     id: "req-3",
+    trace_id: "2123456789abcdef0123456789abcdef",
     timestamp: new Date(Date.now() - 1000 * 90).toISOString(),
     service_name: "demo-api",
     environment: "demo",
@@ -698,6 +709,7 @@ const demoRequests: RequestRecord[] = [
   },
   {
     id: "req-4",
+    trace_id: "3123456789abcdef0123456789abcdef",
     timestamp: new Date(Date.now() - 1000 * 120).toISOString(),
     service_name: "demo-api",
     environment: "demo",

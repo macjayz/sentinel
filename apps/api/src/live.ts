@@ -1,5 +1,6 @@
 import { WebSocketServer, WebSocket } from "ws";
 import type { Server } from "node:http";
+import { withSpan } from "@sentinel/shared";
 
 export function attachLiveServer(server: Server) {
   const wss = new WebSocketServer({ server, path: "/live" });
@@ -15,10 +16,19 @@ export function attachLiveServer(server: Server) {
       return clients.size;
     },
     publish(channel: string, payload: unknown) {
-      const message = JSON.stringify({ channel, payload });
-      for (const client of clients) {
-        if (client.readyState === WebSocket.OPEN) client.send(message);
-      }
+      void withSpan(
+        "sentinel.websocket.publish",
+        {
+          "sentinel.websocket.channel": channel,
+          "sentinel.websocket.clients": clients.size
+        },
+        async () => {
+          const message = JSON.stringify({ channel, payload });
+          for (const client of clients) {
+            if (client.readyState === WebSocket.OPEN) client.send(message);
+          }
+        }
+      );
     },
     close() {
       wss.close();

@@ -8,6 +8,8 @@ create table if not exists projects (
 
 create table if not exists api_events (
   id text primary key,
+  trace_id text,
+  parent_span_id text,
   project_id text not null,
   service_name text not null,
   environment text not null,
@@ -39,6 +41,7 @@ create index if not exists api_events_project_timestamp_idx on api_events(projec
 create index if not exists api_events_path_idx on api_events(path);
 create index if not exists api_events_ip_idx on api_events(ip);
 create index if not exists api_events_threat_idx on api_events(threat_score desc);
+create index if not exists api_events_trace_id_idx on api_events(trace_id);
 
 create table if not exists incidents (
   id uuid primary key default gen_random_uuid(),
