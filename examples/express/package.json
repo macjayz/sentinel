@@ -1,0 +1,15 @@
+{
+  "name": "sentinel-express-example",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "tsx server.ts"
+  },
+  "dependencies": {
+    "@sentinel/sdk-node": "0.1.0",
+    "body-parser": "^1.20.2",
+    "express": "^4.19.2",
+    "tsx": "^4.19.0"
+  }
+}

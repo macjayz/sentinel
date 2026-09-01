@@ -71,3 +71,31 @@ The repository is organized as a TypeScript monorepo:
 ## Status
 
 Sentinel is under active MVP implementation.
+
+## Local Development
+
+Install dependencies:
+
+```bash
+npm install
+```
+
+Run the full self-hosted stack:
+
+```bash
+docker compose up --build
+```
+
+Run services locally:
+
+```bash
+npm run dev
+```
+
+Use the Express example after the API is running:
+
+```bash
+npm run dev -w examples/express
+```
+
+The dashboard runs at `http://localhost:5173` and the API runs at `http://localhost:8080`.

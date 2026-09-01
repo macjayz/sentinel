@@ -5,29 +5,34 @@
   "description": "Self-hosted API security and observability platform.",
   "type": "module",
   "scripts": {
-    "build": "npm run build --workspaces",
+    "build": "npm run build --workspaces --if-present",
     "dev": "concurrently \"npm run dev -w apps/api\" \"npm run dev -w apps/worker\" \"npm run dev -w apps/dashboard\"",
-    "lint": "eslint . --ext .ts,.tsx",
-    "test": "vitest run --workspaces",
+    "lint": "eslint .",
+    "test": "npm run test --workspaces --if-present",
     "typecheck": "tsc -b tsconfig.json",
     "format": "prettier --write ."
   },
   "workspaces": [
     "apps/*",
-    "packages/*"
+    "packages/*",
+    "examples/*"
   ],
   "devDependencies": {
-    "@eslint/js": "^9.9.0",
+    "@eslint/js": "9.9.0",
     "@types/node": "^22.5.4",
     "@typescript-eslint/eslint-plugin": "^8.4.0",
     "@typescript-eslint/parser": "^8.4.0",
     "concurrently": "^9.0.1",
-    "eslint": "^9.9.0",
+    "eslint": "9.9.0",
     "prettier": "^3.3.3",
+    "rollup": "4.21.2",
     "typescript": "^5.5.4",
     "vitest": "^2.0.5"
   },
   "engines": {
     "node": ">=20"
+  },
+  "optionalDependencies": {
+    "@rollup/rollup-darwin-arm64": "^4.21.2"
   }
 }

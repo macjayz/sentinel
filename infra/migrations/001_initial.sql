@@ -1,0 +1,57 @@
+create extension if not exists pgcrypto;
+
+create table if not exists projects (
+  id text primary key,
+  name text not null,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists api_events (
+  id text primary key,
+  project_id text not null,
+  service_name text not null,
+  environment text not null,
+  timestamp timestamptz not null,
+  kind text not null,
+  method text not null,
+  path text not null,
+  route text,
+  ip text,
+  user_agent text,
+  request_headers jsonb not null default '{}',
+  request_query jsonb not null default '{}',
+  request_body jsonb,
+  status_code int not null,
+  latency_ms int not null,
+  body_bytes int,
+  auth_present boolean not null default false,
+  auth_failed boolean not null default false,
+  graphql_operation_name text,
+  graphql_operation_type text,
+  evm_rpc_method text,
+  threat_score int not null default 0,
+  threat_severity text not null default 'low',
+  threat_signals jsonb not null default '[]',
+  created_at timestamptz not null default now()
+);
+
+create index if not exists api_events_project_timestamp_idx on api_events(project_id, timestamp desc);
+create index if not exists api_events_path_idx on api_events(path);
+create index if not exists api_events_ip_idx on api_events(ip);
+create index if not exists api_events_threat_idx on api_events(threat_score desc);
+
+create table if not exists incidents (
+  id uuid primary key default gen_random_uuid(),
+  event_id text not null unique references api_events(id) on delete cascade,
+  project_id text not null,
+  severity text not null,
+  title text not null,
+  description text not null,
+  signals jsonb not null default '[]',
+  status text not null default 'open',
+  created_at timestamptz not null default now()
+);
+
+insert into projects (id, name)
+values ('demo', 'Demo Project')
+on conflict (id) do nothing;
