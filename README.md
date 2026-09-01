@@ -150,3 +150,14 @@ npm run build
 ## Roadmap
 
 See [docs/roadmap.md](docs/roadmap.md).
+
+## Architectural Decisions
+
+- [ADR-001: Use PostgreSQL For Durable Storage](docs/adr/001-use-postgresql.md)
+- [ADR-002: Use Redis Streams For MVP Queueing](docs/adr/002-use-redis-streams.md)
+- [ADR-003: Keep Ingestion Asynchronous](docs/adr/003-keep-ingestion-asynchronous.md)
+- [ADR-004: Redact Sensitive Data By Default](docs/adr/004-redact-sensitive-data-by-default.md)
+
+## License
+
+MIT
