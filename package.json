@@ -7,6 +7,7 @@
   "scripts": {
     "build": "npm run build --workspaces --if-present",
     "dev": "concurrently \"npm run dev -w apps/api\" \"npm run dev -w apps/worker\" \"npm run dev -w apps/dashboard\"",
+    "seed:demo": "tsx scripts/seed-demo-events.ts",
     "lint": "eslint .",
     "test": "npm run test --workspaces --if-present",
     "typecheck": "tsc -b tsconfig.json",
@@ -26,6 +27,7 @@
     "eslint": "9.9.0",
     "prettier": "^3.3.3",
     "rollup": "4.21.2",
+    "tsx": "^4.19.0",
     "typescript": "^5.5.4",
     "vitest": "^2.0.5"
   },

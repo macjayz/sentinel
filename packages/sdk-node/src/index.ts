@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import {
   classifyTraffic,
   EventBatch,
+  normalizeRoutePath,
   RedactionConfig,
   redactHeaders,
   redactValue,
@@ -44,6 +45,7 @@ export function sentinelExpress(options: SentinelMiddlewareOptions) {
       const kind = classifyTraffic(req.path, body);
       const headers = normalizeHeaders(req.headers);
       const authHeader = headers.authorization;
+      const route = req.route?.path ? String(req.route.path) : normalizeRoutePath(req.path);
       const event: SentinelEvent = {
         id: randomUUID(),
         projectId: options.projectId,
@@ -54,7 +56,7 @@ export function sentinelExpress(options: SentinelMiddlewareOptions) {
         request: {
           method: req.method as SentinelEvent["request"]["method"],
           path: req.path,
-          route: req.route?.path ? String(req.route.path) : undefined,
+          route,
           ip: req.ip,
           userAgent: headers["user-agent"],
           headers: redactHeaders(headers, options.redaction),

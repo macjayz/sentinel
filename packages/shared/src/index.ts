@@ -94,6 +94,25 @@ export function classifyTraffic(path: string, body: unknown): TrafficKind {
   return "rest";
 }
 
+export function normalizeRoutePath(path: string): string {
+  const cleanPath = path.split("?")[0]?.replace(/\/+$/, "") || "/";
+
+  return cleanPath
+    .split("/")
+    .map((segment) => {
+      if (!segment) return segment;
+      if (/^\d+$/.test(segment)) return ":id";
+      if (/^[0-9a-f]{24}$/i.test(segment)) return ":objectId";
+      if (/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(segment)) {
+        return ":uuid";
+      }
+      if (/^0x[0-9a-f]{40}$/i.test(segment)) return ":address";
+      if (/^0x[0-9a-f]{64}$/i.test(segment)) return ":hash";
+      return segment;
+    })
+    .join("/");
+}
+
 export function redactValue(value: unknown, config: RedactionConfig = {}): unknown {
   const replacement = config.replacement ?? "[REDACTED]";
   const sensitive = new Set([...defaultSensitiveFields, ...(config.fields ?? [])].map(normalizeKey));

@@ -110,6 +110,12 @@ Use the Express example after the API is running:
 npm run dev -w examples/express
 ```
 
+Seed realistic demo traffic after the API and worker are running:
+
+```bash
+npm run seed:demo
+```
+
 The dashboard runs at `http://localhost:5173` and the API runs at `http://localhost:8080`.
 
 ## Example SDK Usage
