@@ -4,6 +4,8 @@ Self-hosted API security and observability for Node.js applications.
 
 Sentinel monitors REST, GraphQL, WebSocket, webhook, and EVM JSON-RPC traffic through a lightweight SDK, an ingestion pipeline, a threat engine, and a dashboard. The MVP focuses on Express applications while keeping the architecture modular enough for additional runtimes and chains later.
 
+![Sentinel dashboard overview](assets/screenshots/dashboard-overview.png)
+
 ## MVP Scope
 
 Sentinel v0 targets:
