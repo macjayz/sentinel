@@ -41,13 +41,20 @@ function App() {
 
   useEffect(() => {
     async function load() {
-      const [overviewResponse, incidentResponse] = await Promise.all([
-        fetch(`${apiBase}/v1/analytics/overview`),
-        fetch(`${apiBase}/v1/analytics/incidents`)
-      ]);
+      try {
+        const [overviewResponse, incidentResponse] = await Promise.all([
+          fetch(`${apiBase}/v1/analytics/overview`),
+          fetch(`${apiBase}/v1/analytics/incidents`)
+        ]);
 
-      setOverview(await overviewResponse.json());
-      setIncidents(await incidentResponse.json());
+        if (!overviewResponse.ok || !incidentResponse.ok) throw new Error("analytics_unavailable");
+
+        setOverview(await overviewResponse.json());
+        setIncidents(await incidentResponse.json());
+      } catch {
+        setOverview(demoOverview);
+        setIncidents(demoIncidents);
+      }
     }
 
     void load();
@@ -198,3 +205,66 @@ function Panel(props: { title: string; children: React.ReactNode }) {
 }
 
 createRoot(document.getElementById("root")!).render(<App />);
+
+const demoOverview: Overview = {
+  totals: {
+    events: 12842,
+    openIncidents: 4,
+    averageLatencyMs: 92
+  },
+  endpoints: [
+    {
+      method: "POST",
+      path: "/api/login",
+      requests: 2384,
+      latency: 86,
+      max_threat_score: 92
+    },
+    {
+      method: "POST",
+      path: "/graphql",
+      requests: 1840,
+      latency: 132,
+      max_threat_score: 61
+    },
+    {
+      method: "POST",
+      path: "/rpc",
+      requests: 956,
+      latency: 74,
+      max_threat_score: 76
+    },
+    {
+      method: "GET",
+      path: "/api/users/:id",
+      requests: 4412,
+      latency: 44,
+      max_threat_score: 28
+    }
+  ],
+  ips: [
+    { ip: "203.0.113.14", requests: 942, max_threat_score: 92 },
+    { ip: "198.51.100.22", requests: 518, max_threat_score: 76 },
+    { ip: "192.0.2.41", requests: 304, max_threat_score: 54 },
+    { ip: "198.51.100.80", requests: 88, max_threat_score: 18 }
+  ]
+};
+
+const demoIncidents: Incident[] = [
+  {
+    id: "SC-1932",
+    severity: "critical",
+    title: "Potential credential stuffing on POST /api/login",
+    description: "Authentication failures and single-IP request volume exceeded heuristic thresholds.",
+    status: "open",
+    created_at: new Date().toISOString()
+  },
+  {
+    id: "SC-1933",
+    severity: "high",
+    title: "Sensitive EVM RPC activity on POST /rpc",
+    description: "Repeated eth_sendRawTransaction requests returned authorization failures.",
+    status: "open",
+    created_at: new Date(Date.now() - 1000 * 60 * 7).toISOString()
+  }
+];
