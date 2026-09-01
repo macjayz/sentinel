@@ -1,6 +1,7 @@
 import pg from "pg";
 import { SentinelEvent, ThreatAssessment } from "@sentinel/shared";
 import { WorkerConfig } from "./config.js";
+import { fingerprintIncident } from "./incidents.js";
 
 const { Pool } = pg;
 
@@ -74,21 +75,82 @@ export async function createIncidentIfNeeded(
   event: SentinelEvent,
   assessment: ThreatAssessment
 ) {
-  if (assessment.score < 25) return;
+  const fingerprint = fingerprintIncident(event, assessment);
+  if (!fingerprint) return;
 
-  await pool.query(
-    `
-    insert into incidents (event_id, project_id, severity, title, description, signals, status)
-    values ($1, $2, $3, $4, $5, $6, 'open')
-    on conflict (event_id) do nothing
-    `,
-    [
-      event.id,
-      event.projectId,
-      assessment.severity,
-      `${assessment.severity.toUpperCase()} threat on ${event.request.method} ${event.request.path}`,
-      assessment.signals.map((signal) => signal.reason).join("; "),
-      assessment.signals
-    ]
-  );
+  const client = await pool.connect();
+
+  try {
+    await client.query("begin");
+
+    const existing = await client.query(
+      `
+      select id, attacker_ips
+      from incidents
+      where incident_key = $1 and status = 'open'
+      for update
+      `,
+      [fingerprint.key]
+    );
+
+    if (existing.rowCount && existing.rows[0]) {
+      const attackerIps = mergeIps(existing.rows[0].attacker_ips, fingerprint.attackerIp);
+      await client.query(
+        `
+        update incidents
+        set severity = $2,
+            description = $3,
+            signals = $4,
+            attacker_ips = $5,
+            request_count = request_count + 1,
+            last_seen_at = $6
+        where id = $1
+        `,
+        [
+          existing.rows[0].id,
+          assessment.severity,
+          fingerprint.description,
+          assessment.signals,
+          JSON.stringify(attackerIps),
+          event.timestamp
+        ]
+      );
+    } else {
+      await client.query(
+        `
+        insert into incidents (
+          event_id, incident_key, project_id, severity, title, description, signals,
+          affected_endpoint, attacker_ips, request_count, started_at, last_seen_at, status
+        )
+        values ($1, $2, $3, $4, $5, $6, $7, $8, $9, 1, $10, $10, 'open')
+        on conflict (incident_key) do nothing
+        `,
+        [
+          event.id,
+          fingerprint.key,
+          event.projectId,
+          assessment.severity,
+          fingerprint.title,
+          fingerprint.description,
+          assessment.signals,
+          fingerprint.affectedEndpoint,
+          JSON.stringify(mergeIps([], fingerprint.attackerIp)),
+          event.timestamp
+        ]
+      );
+    }
+
+    await client.query("commit");
+  } catch (error) {
+    await client.query("rollback");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+function mergeIps(existing: unknown, ip?: string) {
+  const values = Array.isArray(existing) ? existing.filter((value) => typeof value === "string") : [];
+  if (ip && !values.includes(ip)) values.push(ip);
+  return values;
 }

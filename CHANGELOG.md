@@ -18,4 +18,5 @@ Initial alpha release.
 - Added demo traffic seeding script.
 - Added health, readiness, runtime metrics, request IDs, and dashboard system status widgets.
 - Added request explorer API and dashboard view with filters.
+- Added grouped incident fingerprints with affected endpoints, source IPs, request counts, and last seen timestamps.
 - Added CI, issue templates, contribution guide, security policy, roadmap, and dashboard screenshot.

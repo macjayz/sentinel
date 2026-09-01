@@ -11,6 +11,7 @@
 - Docker Compose self-hosting
 - Health, readiness, and runtime metrics
 - Request explorer with method, status, IP, path, and threat filters
+- Grouped security incidents with affected endpoint, attacker IPs, duration, and request count
 
 ## v0.2 Product Hardening
 

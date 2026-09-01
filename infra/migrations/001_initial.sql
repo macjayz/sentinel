@@ -43,14 +43,26 @@ create index if not exists api_events_threat_idx on api_events(threat_score desc
 create table if not exists incidents (
   id uuid primary key default gen_random_uuid(),
   event_id text not null unique references api_events(id) on delete cascade,
+  incident_key text,
   project_id text not null,
   severity text not null,
   title text not null,
   description text not null,
   signals jsonb not null default '[]',
+  affected_endpoint text,
+  attacker_ips jsonb not null default '[]',
+  request_count int not null default 1,
+  started_at timestamptz not null default now(),
+  last_seen_at timestamptz not null default now(),
   status text not null default 'open',
   created_at timestamptz not null default now()
 );
+
+update incidents
+set incident_key = 'event:' || event_id
+where incident_key is null;
+
+create unique index if not exists incidents_incident_key_idx on incidents(incident_key);
 
 insert into projects (id, name)
 values ('demo', 'Demo Project')

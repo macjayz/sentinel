@@ -42,9 +42,10 @@ export async function getOverview(pool: pg.Pool) {
 
 export async function getIncidents(pool: pg.Pool) {
   const result = await pool.query(`
-    select id, event_id, severity, title, description, signals, status, created_at
+    select id, event_id, incident_key, severity, title, description, signals, status,
+           affected_endpoint, attacker_ips, request_count, started_at, last_seen_at, created_at
     from incidents
-    order by created_at desc
+    order by last_seen_at desc, created_at desc
     limit 50
   `);
 

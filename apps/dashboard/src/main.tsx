@@ -37,10 +37,16 @@ type Overview = {
 
 type Incident = {
   id: string;
+  incident_key?: string;
   severity: string;
   title: string;
   description: string;
   status: string;
+  affected_endpoint?: string;
+  attacker_ips?: string[];
+  request_count?: number;
+  started_at?: string;
+  last_seen_at?: string;
   created_at: string;
 };
 
@@ -468,8 +474,13 @@ function IncidentPanel(props: { incidents: Incident[] }) {
             <div>
               <strong>{incident.title}</strong>
               <p>{incident.description}</p>
+              <div className="incident-meta">
+                <span>{incident.affected_endpoint ?? "Endpoint pending"}</span>
+                <span>{incident.request_count ?? 1} requests</span>
+                <span>{formatIps(incident.attacker_ips)}</span>
+              </div>
             </div>
-            <time>{new Date(incident.created_at).toLocaleString()}</time>
+            <time>{new Date(incident.last_seen_at ?? incident.created_at).toLocaleString()}</time>
           </article>
         ))}
       </div>
@@ -530,6 +541,12 @@ function getHeader(view: "overview" | "requests" | "incidents") {
   };
 }
 
+function formatIps(ips?: string[]) {
+  if (!ips || ips.length === 0) return "No source IP";
+  if (ips.length === 1) return ips[0];
+  return `${ips.length} source IPs`;
+}
+
 const demoOverview: Overview = {
   totals: {
     events: 12842,
@@ -580,7 +597,12 @@ const demoIncidents: Incident[] = [
     severity: "critical",
     title: "Potential credential stuffing on POST /api/login",
     description: "Authentication failures and single-IP request volume exceeded heuristic thresholds.",
+    affected_endpoint: "POST /api/login",
+    attacker_ips: ["203.0.113.14", "203.0.113.15", "203.0.113.16"],
+    request_count: 35,
     status: "open",
+    started_at: new Date(Date.now() - 1000 * 60 * 8).toISOString(),
+    last_seen_at: new Date().toISOString(),
     created_at: new Date().toISOString()
   },
   {
@@ -588,7 +610,12 @@ const demoIncidents: Incident[] = [
     severity: "high",
     title: "Sensitive EVM RPC activity on POST /rpc",
     description: "Repeated eth_sendRawTransaction requests returned authorization failures.",
+    affected_endpoint: "POST /rpc",
+    attacker_ips: ["198.51.100.22"],
+    request_count: 9,
     status: "open",
+    started_at: new Date(Date.now() - 1000 * 60 * 12).toISOString(),
+    last_seen_at: new Date(Date.now() - 1000 * 60 * 7).toISOString(),
     created_at: new Date(Date.now() - 1000 * 60 * 7).toISOString()
   }
 ];

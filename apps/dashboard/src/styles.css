@@ -347,6 +347,21 @@ meter {
   margin-top: 4px;
 }
 
+.incident-meta {
+  color: #687789;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.incident-meta span {
+  background: #eef2f6;
+  border-radius: 999px;
+  font-size: 12px;
+  padding: 4px 8px;
+}
+
 .severity {
   border-radius: 999px;
   font-size: 12px;

@@ -81,6 +81,7 @@ Most teams can see application logs, but they cannot easily answer security-focu
 - Which GraphQL operations are slow or failing?
 - Which EVM JSON-RPC methods are risky?
 - Which requests should become incidents?
+- Which related security signals belong to the same incident?
 
 Sentinel is designed to make those answers visible in a self-hosted stack developers can understand and extend.
 
