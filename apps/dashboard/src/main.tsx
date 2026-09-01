@@ -147,7 +147,7 @@ function App() {
             <h1>Security Overview</h1>
             <p>REST, GraphQL, and EVM JSON-RPC telemetry from monitored services.</p>
           </div>
-          <div className="live-pill">
+          <div className={`live-pill ${liveStatus.toLowerCase().replace(/\s+/g, "-")}`}>
             <Radio size={16} />
             {liveStatus}
           </div>
@@ -177,13 +177,13 @@ function App() {
           />
           <StatusItem
             label="Database"
-            value={`${readiness.checks.database.latencyMs}ms`}
+            value={formatLatency(readiness.checks.database.latencyMs)}
             active={readiness.checks.database.ok}
             icon={<Database size={16} />}
           />
           <StatusItem
             label="Queue Depth"
-            value={systemMetrics.queueDepth}
+            value={formatCount(systemMetrics.queueDepth)}
             active={readiness.checks.queue.ok}
             icon={<Gauge size={16} />}
           />
@@ -299,6 +299,14 @@ function StatusItem(props: {
 }
 
 createRoot(document.getElementById("root")!).render(<App />);
+
+function formatLatency(value: number) {
+  return value < 0 ? "N/A" : `${value}ms`;
+}
+
+function formatCount(value: number) {
+  return value < 0 ? "N/A" : value;
+}
 
 const demoOverview: Overview = {
   totals: {

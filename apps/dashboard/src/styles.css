@@ -89,13 +89,29 @@ h2 {
 
 .live-pill {
   align-items: center;
-  background: #dff5ec;
-  border: 1px solid #b4dfce;
   border-radius: 999px;
-  color: #17633f;
   display: flex;
   gap: 8px;
   padding: 8px 12px;
+}
+
+.live-pill.live,
+.live-pill.event-received {
+  background: #dff5ec;
+  border: 1px solid #b4dfce;
+  color: #17633f;
+}
+
+.live-pill.connecting {
+  background: #fff4d8;
+  border: 1px solid #e5c76f;
+  color: #845500;
+}
+
+.live-pill.offline {
+  background: #ffe5e5;
+  border: 1px solid #efb5b5;
+  color: #a51d1d;
 }
 
 .metrics {
