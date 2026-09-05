@@ -212,6 +212,7 @@ function App() {
   const [readiness, setReadiness] = useState<Readiness>(demoReadiness);
   const [systemMetrics, setSystemMetrics] = useState<SystemMetrics>(demoSystemMetrics);
   const [liveStatus, setLiveStatus] = useState("Connecting");
+  const [actionError, setActionError] = useState<string | null>(null);
   const selectedProject =
     session.projects.find((project) => project.id === selectedProjectId) ?? session.projects[0];
 
@@ -277,83 +278,117 @@ function App() {
   }, [isAuthenticated, requestFilters, selectedProjectId]);
 
   async function createDashboardApiKey() {
-    try {
-      const response = await apiFetch("/v1/api-keys", selectedProjectId, {
+    setActionError(null);
+    const outcome = await submitToApi(() =>
+      apiFetch("/v1/api-keys", selectedProjectId, {
         method: "POST",
         body: JSON.stringify({ name: newKeyName })
-      });
-      if (!response.ok) throw new Error("key_create_failed");
-      const key = (await response.json()) as ApiKeyRecord;
-      setApiKeys((current) => [key, ...current]);
-      setNewKeySecret(key.key ?? "");
-    } catch {
+      })
+    );
+
+    if (outcome.kind === "unreachable") {
       const key = createDemoApiKey(newKeyName);
       setApiKeys((current) => [key, ...current]);
       setNewKeySecret(key.key ?? "");
+      return;
     }
+    if (outcome.kind === "rejected") {
+      setActionError(outcome.message);
+      return;
+    }
+
+    const key = (await outcome.response.json()) as ApiKeyRecord;
+    setApiKeys((current) => [key, ...current]);
+    setNewKeySecret(key.key ?? "");
   }
 
   async function revokeDashboardApiKey(keyId: string) {
-    try {
-      const response = await apiFetch(`/v1/api-keys/${keyId}`, selectedProjectId, { method: "DELETE" });
-      if (!response.ok) throw new Error("key_revoke_failed");
-    } catch {
-      // Offline demo mode keeps the interaction local while Docker is unavailable.
+    setActionError(null);
+    const outcome = await submitToApi(() => apiFetch(`/v1/api-keys/${keyId}`, selectedProjectId, { method: "DELETE" }));
+
+    if (outcome.kind === "rejected") {
+      setActionError(outcome.message);
+      return;
     }
 
+    // A network-unreachable API still applies the change locally so offline demo mode stays usable.
     setApiKeys((current) =>
       current.map((key) => (key.id === keyId ? { ...key, revoked_at: new Date().toISOString() } : key))
     );
   }
 
   async function updateDashboardIncidentStatus(incidentId: string, status: IncidentStatus) {
-    try {
-      const response = await apiFetch(`/v1/incidents/${incidentId}/status`, selectedProjectId, {
+    setActionError(null);
+    const outcome = await submitToApi(() =>
+      apiFetch(`/v1/incidents/${incidentId}/status`, selectedProjectId, {
         method: "PATCH",
         body: JSON.stringify({ status })
-      });
-      if (!response.ok) throw new Error("incident_update_failed");
-      const incident = (await response.json()) as Incident;
-      setIncidents((current) => current.map((entry) => (entry.id === incidentId ? incident : entry)));
-    } catch {
+      })
+    );
+
+    if (outcome.kind === "rejected") {
+      setActionError(outcome.message);
+      return;
+    }
+    if (outcome.kind === "unreachable") {
       setIncidents((current) =>
         current.map((entry) =>
           entry.id === incidentId ? { ...entry, status, updated_at: new Date().toISOString() } : entry
         )
       );
+      return;
     }
+
+    const incident = (await outcome.response.json()) as Incident;
+    setIncidents((current) => current.map((entry) => (entry.id === incidentId ? incident : entry)));
   }
 
   async function createDashboardAlertDestination() {
-    try {
-      const response = await apiFetch("/v1/alert-destinations", selectedProjectId, {
+    setActionError(null);
+    const outcome = await submitToApi(() =>
+      apiFetch("/v1/alert-destinations", selectedProjectId, {
         method: "POST",
         body: JSON.stringify(newDestination)
-      });
-      if (!response.ok) throw new Error("alert_destination_create_failed");
-      const destination = (await response.json()) as AlertDestination;
-      setAlertDestinations((current) => [destination, ...current]);
-    } catch {
+      })
+    );
+
+    if (outcome.kind === "unreachable") {
       setAlertDestinations((current) => [createDemoAlertDestination(newDestination), ...current]);
+      return;
     }
+    if (outcome.kind === "rejected") {
+      setActionError(outcome.message);
+      return;
+    }
+
+    const destination = (await outcome.response.json()) as AlertDestination;
+    setAlertDestinations((current) => [destination, ...current]);
   }
 
   async function setDashboardAlertDestinationStatus(destinationId: string, enabled: boolean) {
-    try {
-      const response = await apiFetch(`/v1/alert-destinations/${destinationId}`, selectedProjectId, {
+    setActionError(null);
+    const outcome = await submitToApi(() =>
+      apiFetch(`/v1/alert-destinations/${destinationId}`, selectedProjectId, {
         method: "PATCH",
         body: JSON.stringify({ enabled })
-      });
-      if (!response.ok) throw new Error("alert_destination_update_failed");
-      const destination = (await response.json()) as AlertDestination;
-      setAlertDestinations((current) => current.map((entry) => (entry.id === destinationId ? destination : entry)));
-    } catch {
+      })
+    );
+
+    if (outcome.kind === "rejected") {
+      setActionError(outcome.message);
+      return;
+    }
+    if (outcome.kind === "unreachable") {
       setAlertDestinations((current) =>
         current.map((entry) =>
           entry.id === destinationId ? { ...entry, enabled, updated_at: new Date().toISOString() } : entry
         )
       );
+      return;
     }
+
+    const destination = (await outcome.response.json()) as AlertDestination;
+    setAlertDestinations((current) => current.map((entry) => (entry.id === destinationId ? destination : entry)));
   }
 
   async function loadRequests() {
@@ -488,6 +523,16 @@ function App() {
             </button>
           </div>
         </header>
+
+        {actionError && (
+          <div className="action-error" role="alert">
+            <XCircle size={16} />
+            <span>{actionError}</span>
+            <button className="dismiss-button" onClick={() => setActionError(null)} title="Dismiss">
+              Dismiss
+            </button>
+          </div>
+        )}
 
         <section className="metrics">
           <Metric label="Events" value={overview?.totals.events ?? 0} icon={<Activity size={18} />} />
@@ -739,6 +784,9 @@ function RequestExplorer(props: {
   onChange: (filters: RequestFilters) => void;
   onRefresh: () => void;
 }) {
+  const [selectedRequestId, setSelectedRequestId] = useState<string | null>(null);
+  const selectedRequest = props.requests.find((request) => request.id === selectedRequestId) ?? null;
+
   const setFilter = (key: keyof RequestFilters, value: string) => {
     props.onChange({ ...props.filters, [key]: value });
   };
@@ -804,7 +852,7 @@ function RequestExplorer(props: {
           </thead>
           <tbody>
             {props.requests.map((request) => (
-              <tr key={request.id}>
+              <tr key={request.id} className="request-row" onClick={() => setSelectedRequestId(request.id)}>
                 <td>{new Date(request.timestamp).toLocaleTimeString()}</td>
                 <td>{request.method}</td>
                 <td>
@@ -829,7 +877,66 @@ function RequestExplorer(props: {
           </tbody>
         </table>
       </div>
+
+      {selectedRequest && <RequestDetail request={selectedRequest} onClose={() => setSelectedRequestId(null)} />}
     </Panel>
+  );
+}
+
+function RequestDetail(props: { request: RequestRecord; onClose: () => void }) {
+  const r = props.request;
+  const fields: Array<[string, string | number | undefined | null]> = [
+    ["Request ID", r.id],
+    ["Trace ID", r.trace_id],
+    ["Parent Span ID", r.parent_span_id],
+    ["Timestamp", new Date(r.timestamp).toLocaleString()],
+    ["Service", r.service_name],
+    ["Environment", r.environment],
+    ["Kind", r.kind],
+    ["Method", r.method],
+    ["Path", r.path],
+    ["Route", r.route],
+    ["IP", r.ip],
+    ["User Agent", r.user_agent],
+    ["Status Code", r.status_code],
+    ["Latency", `${r.latency_ms}ms`],
+    ["Body Bytes", r.body_bytes],
+    ["Auth Present", r.auth_present ? "Yes" : "No"],
+    ["Auth Failed", r.auth_failed ? "Yes" : "No"],
+    ["GraphQL Operation", r.graphql_operation_name],
+    ["GraphQL Operation Type", r.graphql_operation_type],
+    ["EVM RPC Method", r.evm_rpc_method],
+    ["EVM Chain ID", r.evm_chain_id],
+    ["EVM Provider", r.evm_provider],
+    ["Wallet Address", r.wallet_address],
+    ["Contract Address", r.contract_address],
+    ["Threat Score", r.threat_score],
+    ["Threat Severity", r.threat_severity]
+  ];
+
+  return (
+    <div className="detail-overlay" onClick={props.onClose}>
+      <div className="detail-panel" onClick={(event) => event.stopPropagation()}>
+        <header>
+          <h3>
+            {r.method} {r.route ?? r.path}
+          </h3>
+          <button className="dismiss-button" onClick={props.onClose}>
+            Close
+          </button>
+        </header>
+        <dl>
+          {fields
+            .filter(([, value]) => value !== undefined && value !== null && value !== "")
+            .map(([label, value]) => (
+              <React.Fragment key={label}>
+                <dt>{label}</dt>
+                <dd>{value}</dd>
+              </React.Fragment>
+            ))}
+        </dl>
+      </div>
+    </div>
   );
 }
 
@@ -1280,6 +1387,43 @@ async function apiFetch(path: string, projectId: string, init: RequestInit = {})
       ...init.headers
     }
   });
+}
+
+type ApiOutcome =
+  | { kind: "ok"; response: Response }
+  | { kind: "rejected"; response: Response; message: string }
+  | { kind: "unreachable" };
+
+// Distinguishes a genuinely unreachable API (network error, Docker down — safe to fall back to
+// offline demo mode) from a reachable API that rejected the request (must surface the real error
+// rather than silently pretending the action succeeded).
+async function submitToApi(request: () => Promise<Response>): Promise<ApiOutcome> {
+  let response: Response;
+  try {
+    response = await request();
+  } catch {
+    return { kind: "unreachable" };
+  }
+
+  if (!response.ok) {
+    return { kind: "rejected", response, message: await readErrorMessage(response) };
+  }
+
+  return { kind: "ok", response };
+}
+
+async function readErrorMessage(response: Response): Promise<string> {
+  try {
+    const body = (await response.json()) as { error?: string; details?: { fieldErrors?: Record<string, string[]> } };
+    const fieldMessage = Object.values(body.details?.fieldErrors ?? {})
+      .flat()
+      .find(Boolean);
+    if (fieldMessage) return fieldMessage;
+    if (body.error) return body.error.replace(/_/g, " ");
+  } catch {
+    // Response body wasn't JSON — fall through to the generic message below.
+  }
+  return `Request failed (${response.status}).`;
 }
 
 function getDemoProjectData(projectId: string) {

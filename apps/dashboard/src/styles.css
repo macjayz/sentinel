@@ -454,6 +454,31 @@ th {
   width: 42px;
 }
 
+.action-error {
+  align-items: center;
+  background: #ffe5e5;
+  border-radius: 8px;
+  color: #a51d1d;
+  display: flex;
+  gap: 10px;
+  margin-bottom: 18px;
+  padding: 10px 14px;
+}
+
+.action-error span {
+  flex: 1;
+  font-weight: 600;
+}
+
+.dismiss-button {
+  background: transparent;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  font-weight: 700;
+  text-decoration: underline;
+}
+
 .primary-action,
 .secondary-action,
 .danger-button {
@@ -618,6 +643,60 @@ pre {
   color: #687789;
   font-size: 12px;
   margin-top: 2px;
+}
+
+.request-row {
+  cursor: pointer;
+}
+
+.request-row:hover {
+  background: #f4f6f9;
+}
+
+.detail-overlay {
+  align-items: flex-start;
+  background: rgba(16, 24, 32, 0.45);
+  bottom: 0;
+  display: flex;
+  justify-content: flex-end;
+  left: 0;
+  position: fixed;
+  right: 0;
+  top: 0;
+  z-index: 20;
+}
+
+.detail-panel {
+  background: #ffffff;
+  height: 100%;
+  overflow-y: auto;
+  padding: 24px;
+  width: min(420px, 100%);
+}
+
+.detail-panel header {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.detail-panel dl {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: 1fr;
+}
+
+.detail-panel dt {
+  color: #687789;
+  font-size: 12px;
+  text-transform: uppercase;
+}
+
+.detail-panel dd {
+  font-weight: 600;
+  margin: 2px 0 0;
+  overflow-wrap: break-word;
 }
 
 .status-code {

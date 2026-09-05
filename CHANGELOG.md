@@ -29,4 +29,6 @@ Initial alpha release.
 - Added incident status workflows, timeline records, alert destination management, and queued alert delivery records for high and critical incidents.
 - Added webhook alert delivery with atomic queue claiming, exponential backoff retries, and terminal failure handling after repeated delivery attempts.
 - Fixed the dashboard project switcher: analytics, incidents, API keys, and alerts endpoints now resolve the authenticated caller's requested project instead of always returning the demo project's data. Anonymous (unauthenticated) requests remain locked to the demo project. The dashboard now authenticates with the shared dev API key by default in both Docker Compose and local development, so this works without extra setup.
+- Fixed the dashboard silently faking success when the API rejects a request (invalid webhook URL, invalid key name): rejected requests now surface the real error message instead of fabricating a local record that vanishes on the next refresh. A genuinely unreachable API still falls back to offline demo mode.
+- Added a request detail view: clicking a row in the Request Explorer opens the full event metadata (trace ID, headers context, auth state, GraphQL/EVM fields, threat signals).
 - Added CI, issue templates, contribution guide, security policy, roadmap, and dashboard screenshot.
