@@ -5,14 +5,20 @@ import { z } from "zod";
 import { EventBatchSchema, withSpan } from "@sentinel/shared";
 import { loadConfig } from "./config.js";
 import {
+  createAlertDestination,
   createApiKey,
   createPool,
+  getIncidentTimeline,
   getIncidents,
   getOverview,
   getRequests,
+  listAlertDeliveries,
+  listAlertDestinations,
   listApiKeys,
   revokeApiKey,
-  resolveProjectForApiKey
+  resolveProjectForApiKey,
+  updateAlertDestination,
+  updateIncidentStatus
 } from "./db.js";
 import { attachLiveServer } from "./live.js";
 import {
@@ -152,6 +158,77 @@ export async function buildServer() {
     return reply.code(204).send();
   });
 
+  app.patch("/v1/incidents/:id/status", async (request, reply) => {
+    const scope = await getAnalyticsProjectScope(pool, config.sentinelApiKey, request.headers["x-sentinel-api-key"]);
+    if (!scope) return reply.code(401).send({ error: "invalid_api_key" });
+
+    const parsed = UpdateIncidentStatusSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: "invalid_incident_status_payload", details: parsed.error.flatten() });
+    }
+
+    const { id } = request.params as { id: string };
+    const incident = await updateIncidentStatus(
+      pool,
+      scope.projectId,
+      id,
+      parsed.data.status,
+      "demo-operator",
+      parsed.data.note
+    );
+    if (!incident) return reply.code(404).send({ error: "incident_not_found" });
+    liveHub.publish("incident.updated", { id, status: parsed.data.status });
+    return incident;
+  });
+
+  app.get("/v1/incidents/:id/timeline", async (request, reply) => {
+    const scope = await getAnalyticsProjectScope(pool, config.sentinelApiKey, request.headers["x-sentinel-api-key"]);
+    if (!scope) return reply.code(401).send({ error: "invalid_api_key" });
+
+    const { id } = request.params as { id: string };
+    return getIncidentTimeline(pool, scope.projectId, id);
+  });
+
+  app.get("/v1/alert-destinations", async (request, reply) => {
+    const scope = await getAnalyticsProjectScope(pool, config.sentinelApiKey, request.headers["x-sentinel-api-key"]);
+    if (!scope) return reply.code(401).send({ error: "invalid_api_key" });
+    return listAlertDestinations(pool, scope.projectId);
+  });
+
+  app.post("/v1/alert-destinations", async (request, reply) => {
+    const scope = await getAnalyticsProjectScope(pool, config.sentinelApiKey, request.headers["x-sentinel-api-key"]);
+    if (!scope) return reply.code(401).send({ error: "invalid_api_key" });
+
+    const parsed = CreateAlertDestinationSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: "invalid_alert_destination_payload", details: parsed.error.flatten() });
+    }
+
+    const destination = await createAlertDestination(pool, scope.projectId, parsed.data.name, parsed.data.url);
+    return reply.code(201).send(destination);
+  });
+
+  app.patch("/v1/alert-destinations/:id", async (request, reply) => {
+    const scope = await getAnalyticsProjectScope(pool, config.sentinelApiKey, request.headers["x-sentinel-api-key"]);
+    if (!scope) return reply.code(401).send({ error: "invalid_api_key" });
+
+    const parsed = UpdateAlertDestinationSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: "invalid_alert_destination_payload", details: parsed.error.flatten() });
+    }
+
+    const { id } = request.params as { id: string };
+    const destination = await updateAlertDestination(pool, scope.projectId, id, parsed.data.enabled);
+    if (!destination) return reply.code(404).send({ error: "alert_destination_not_found" });
+    return destination;
+  });
+
+  app.get("/v1/alert-deliveries", async (request, reply) => {
+    const scope = await getAnalyticsProjectScope(pool, config.sentinelApiKey, request.headers["x-sentinel-api-key"]);
+    if (!scope) return reply.code(401).send({ error: "invalid_api_key" });
+    return listAlertDeliveries(pool, scope.projectId);
+  });
+
   app.addHook("onClose", async () => {
     liveHub.close();
     await redis.quit();
@@ -163,6 +240,22 @@ export async function buildServer() {
 
 const CreateApiKeySchema = z.object({
   name: z.string().trim().min(2).max(80)
+});
+
+const UpdateIncidentStatusSchema = z.object({
+  status: z.enum(["open", "acknowledged", "resolved", "ignored"]),
+  note: z.string().trim().max(500).optional()
+});
+
+const CreateAlertDestinationSchema = z.object({
+  name: z.string().trim().min(2).max(80),
+  url: z.string().url().refine((url) => url.startsWith("https://") || url.startsWith("http://localhost"), {
+    message: "Webhook URLs must use HTTPS unless they point at localhost."
+  })
+});
+
+const UpdateAlertDestinationSchema = z.object({
+  enabled: z.boolean()
 });
 
 async function getAnalyticsProjectScope(

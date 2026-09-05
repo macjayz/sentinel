@@ -14,7 +14,7 @@ export async function getOverview(pool: pg.Pool, projectId = "demo") {
       "select count(*)::int as total, avg(latency_ms)::float as latency from api_events where project_id = $1",
       [projectId]
     ),
-    pool.query("select count(*)::int as total from incidents where status = 'open' and project_id = $1", [
+    pool.query("select count(*)::int as total from incidents where status in ('open', 'acknowledged') and project_id = $1", [
       projectId
     ]),
     pool.query(
@@ -57,12 +57,149 @@ export async function getIncidents(pool: pg.Pool, projectId = "demo") {
   const result = await pool.query(
     `
     select id, event_id, incident_key, severity, title, description, signals, status,
-           affected_endpoint, attacker_ips, request_count, started_at, last_seen_at, created_at
+           affected_endpoint, attacker_ips, request_count, started_at, last_seen_at,
+           acknowledged_at, resolved_at, ignored_at, updated_at, created_at
     from incidents
     where project_id = $1
     order by last_seen_at desc, created_at desc
     limit 50
   `,
+    [projectId]
+  );
+
+  return result.rows;
+}
+
+export type IncidentStatus = "open" | "acknowledged" | "resolved" | "ignored";
+
+export async function updateIncidentStatus(
+  pool: pg.Pool,
+  projectId: string,
+  incidentId: string,
+  status: IncidentStatus,
+  actor = "demo-operator",
+  note?: string
+) {
+  const timestampColumn = {
+    open: null,
+    acknowledged: "acknowledged_at",
+    resolved: "resolved_at",
+    ignored: "ignored_at"
+  }[status];
+  const assignments = ["status = $3", "updated_at = now()"];
+  if (timestampColumn) assignments.push(`${timestampColumn} = now()`);
+
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+    const result = await client.query(
+      `
+      update incidents
+      set ${assignments.join(", ")}
+      where id = $1 and project_id = $2
+      returning id, event_id, incident_key, severity, title, description, signals, status,
+                affected_endpoint, attacker_ips, request_count, started_at, last_seen_at,
+                acknowledged_at, resolved_at, ignored_at, updated_at, created_at
+      `,
+      [incidentId, projectId, status]
+    );
+
+    const incident = result.rows[0];
+    if (!incident) {
+      await client.query("rollback");
+      return null;
+    }
+
+    await client.query(
+      `
+      insert into incident_timeline (incident_id, project_id, action, actor, note)
+      values ($1, $2, $3, $4, $5)
+      `,
+      [incidentId, projectId, `status:${status}`, actor, note ?? null]
+    );
+
+    await client.query("commit");
+    return incident;
+  } catch (error) {
+    await client.query("rollback");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function getIncidentTimeline(pool: pg.Pool, projectId: string, incidentId: string) {
+  const result = await pool.query(
+    `
+    select id, incident_id, action, actor, note, created_at
+    from incident_timeline
+    where project_id = $1 and incident_id = $2
+    order by created_at desc
+    limit 50
+    `,
+    [projectId, incidentId]
+  );
+
+  return result.rows;
+}
+
+export async function listAlertDestinations(pool: pg.Pool, projectId: string) {
+  const result = await pool.query(
+    `
+    select id, name, url, enabled, created_at, updated_at
+    from alert_destinations
+    where project_id = $1
+    order by created_at desc
+    `,
+    [projectId]
+  );
+
+  return result.rows;
+}
+
+export async function createAlertDestination(pool: pg.Pool, projectId: string, name: string, url: string) {
+  const result = await pool.query(
+    `
+    insert into alert_destinations (project_id, name, url)
+    values ($1, $2, $3)
+    returning id, name, url, enabled, created_at, updated_at
+    `,
+    [projectId, name, url]
+  );
+
+  return result.rows[0];
+}
+
+export async function updateAlertDestination(
+  pool: pg.Pool,
+  projectId: string,
+  destinationId: string,
+  enabled: boolean
+) {
+  const result = await pool.query(
+    `
+    update alert_destinations
+    set enabled = $3, updated_at = now()
+    where id = $1 and project_id = $2
+    returning id, name, url, enabled, created_at, updated_at
+    `,
+    [destinationId, projectId, enabled]
+  );
+
+  return result.rows[0] ?? null;
+}
+
+export async function listAlertDeliveries(pool: pg.Pool, projectId: string) {
+  const result = await pool.query(
+    `
+    select deliveries.id, deliveries.incident_id, deliveries.destination_id, destinations.name as destination_name,
+           deliveries.status, deliveries.attempts, deliveries.last_error, deliveries.created_at, deliveries.delivered_at
+    from alert_deliveries deliveries
+    join alert_destinations destinations on destinations.id = deliveries.destination_id
+    where deliveries.project_id = $1
+    order by deliveries.created_at desc
+    limit 50
+    `,
     [projectId]
   );
 

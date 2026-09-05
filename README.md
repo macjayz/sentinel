@@ -14,6 +14,8 @@ Sentinel monitors REST, GraphQL, WebSocket, webhook, and EVM JSON-RPC traffic th
 
 ![Sentinel RPC activity](assets/screenshots/rpc-activity.png)
 
+![Sentinel alert workflows](assets/screenshots/alert-workflows.png)
+
 ## MVP Scope
 
 Sentinel v0 targets:
@@ -91,6 +93,7 @@ Most teams can see application logs, but they cannot easily answer security-focu
 - Which EVM JSON-RPC methods are risky?
 - Which requests should become incidents?
 - Which related security signals belong to the same incident?
+- Which alerts were queued and which incidents still need response?
 
 Sentinel is designed to make those answers visible in a self-hosted stack developers can understand and extend.
 
@@ -144,6 +147,12 @@ Operational endpoints:
 - `GET /v1/api-keys`: list project-scoped SDK API keys
 - `POST /v1/api-keys`: create a new project-scoped SDK API key
 - `DELETE /v1/api-keys/:id`: revoke a project-scoped SDK API key
+- `PATCH /v1/incidents/:id/status`: update incident workflow status
+- `GET /v1/incidents/:id/timeline`: list status timeline entries
+- `GET /v1/alert-destinations`: list project webhook destinations
+- `POST /v1/alert-destinations`: create a project webhook destination
+- `PATCH /v1/alert-destinations/:id`: enable or disable a webhook destination
+- `GET /v1/alert-deliveries`: list queued alert delivery records
 
 Dashboard access:
 
@@ -152,6 +161,8 @@ Dashboard access:
 - The signed-in shell shows the current organization, operator role, and selected project.
 - The project switcher scopes dashboard analytics requests and keeps offline demo data project-aware.
 - The API Keys view provides project key listing, one-time key reveal, revoke actions, and an SDK setup snippet.
+- The Incidents view supports status filters and open, acknowledged, resolved, and ignored workflows.
+- The Alerts view manages webhook destinations and shows queued high-severity incident deliveries.
 
 Web3 RPC:
 

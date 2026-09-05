@@ -3,7 +3,9 @@ import { createRoot } from "react-dom/client";
 import {
   Activity,
   AlertTriangle,
+  Bell,
   Building2,
+  CheckCircle2,
   Clock,
   Copy,
   Database,
@@ -18,7 +20,8 @@ import {
   Search,
   ShieldCheck,
   Trash2,
-  User
+  User,
+  XCircle
 } from "lucide-react";
 import "./styles.css";
 
@@ -54,8 +57,14 @@ type Incident = {
   request_count?: number;
   started_at?: string;
   last_seen_at?: string;
+  acknowledged_at?: string | null;
+  resolved_at?: string | null;
+  ignored_at?: string | null;
+  updated_at?: string;
   created_at: string;
 };
+
+type IncidentStatus = "open" | "acknowledged" | "resolved" | "ignored";
 
 type Readiness = {
   status: "ready" | "degraded";
@@ -124,7 +133,28 @@ type ApiKeyRecord = {
   revoked_at?: string | null;
 };
 
-type DashboardView = "overview" | "requests" | "incidents" | "api-keys" | "rpc";
+type AlertDestination = {
+  id: string;
+  name: string;
+  url: string;
+  enabled: boolean;
+  created_at: string;
+  updated_at?: string;
+};
+
+type AlertDelivery = {
+  id: string;
+  incident_id: string;
+  destination_id: string;
+  destination_name: string;
+  status: string;
+  attempts: number;
+  last_error?: string | null;
+  created_at: string;
+  delivered_at?: string | null;
+};
+
+type DashboardView = "overview" | "requests" | "incidents" | "api-keys" | "alerts" | "rpc";
 
 type ProjectOption = {
   id: string;
@@ -163,6 +193,13 @@ function App() {
   const [incidents, setIncidents] = useState<Incident[]>([]);
   const [requests, setRequests] = useState<RequestRecord[]>(demoRequests);
   const [apiKeys, setApiKeys] = useState<ApiKeyRecord[]>(demoApiKeys);
+  const [alertDestinations, setAlertDestinations] = useState<AlertDestination[]>(demoAlertDestinations);
+  const [alertDeliveries, setAlertDeliveries] = useState<AlertDelivery[]>(demoAlertDeliveries);
+  const [newDestination, setNewDestination] = useState({
+    name: "Security Operations",
+    url: "https://alerts.example.com/sentinel"
+  });
+  const [incidentFilters, setIncidentFilters] = useState({ status: "open", severity: "" });
   const [newKeyName, setNewKeyName] = useState("Production SDK");
   const [newKeySecret, setNewKeySecret] = useState("");
   const [requestFilters, setRequestFilters] = useState<RequestFilters>({
@@ -183,12 +220,22 @@ function App() {
 
     async function load() {
       try {
-        const [overviewResponse, incidentResponse, readinessResponse, systemResponse, apiKeysResponse] = await Promise.all([
+        const [
+          overviewResponse,
+          incidentResponse,
+          readinessResponse,
+          systemResponse,
+          apiKeysResponse,
+          alertDestinationsResponse,
+          alertDeliveriesResponse
+        ] = await Promise.all([
           apiFetch("/v1/analytics/overview", selectedProjectId),
           apiFetch("/v1/analytics/incidents", selectedProjectId),
           fetch(`${apiBase}/ready`),
           apiFetch("/v1/analytics/system", selectedProjectId),
-          apiFetch("/v1/api-keys", selectedProjectId)
+          apiFetch("/v1/api-keys", selectedProjectId),
+          apiFetch("/v1/alert-destinations", selectedProjectId),
+          apiFetch("/v1/alert-deliveries", selectedProjectId)
         ]);
 
         if (
@@ -196,7 +243,9 @@ function App() {
           !incidentResponse.ok ||
           !readinessResponse.ok ||
           !systemResponse.ok ||
-          !apiKeysResponse.ok
+          !apiKeysResponse.ok ||
+          !alertDestinationsResponse.ok ||
+          !alertDeliveriesResponse.ok
         ) {
           throw new Error("analytics_unavailable");
         }
@@ -206,6 +255,8 @@ function App() {
         setReadiness(await readinessResponse.json());
         setSystemMetrics(await systemResponse.json());
         setApiKeys(await apiKeysResponse.json());
+        setAlertDestinations(await alertDestinationsResponse.json());
+        setAlertDeliveries(await alertDeliveriesResponse.json());
         await loadRequests();
       } catch {
         const demoData = getDemoProjectData(selectedProjectId);
@@ -215,6 +266,8 @@ function App() {
         setSystemMetrics(demoSystemMetrics);
         setRequests(filterDemoRequests(demoData.requests, requestFilters));
         setApiKeys(demoData.apiKeys);
+        setAlertDestinations(demoData.alertDestinations);
+        setAlertDeliveries(demoData.alertDeliveries);
       }
     }
 
@@ -251,6 +304,56 @@ function App() {
     setApiKeys((current) =>
       current.map((key) => (key.id === keyId ? { ...key, revoked_at: new Date().toISOString() } : key))
     );
+  }
+
+  async function updateDashboardIncidentStatus(incidentId: string, status: IncidentStatus) {
+    try {
+      const response = await apiFetch(`/v1/incidents/${incidentId}/status`, selectedProjectId, {
+        method: "PATCH",
+        body: JSON.stringify({ status })
+      });
+      if (!response.ok) throw new Error("incident_update_failed");
+      const incident = (await response.json()) as Incident;
+      setIncidents((current) => current.map((entry) => (entry.id === incidentId ? incident : entry)));
+    } catch {
+      setIncidents((current) =>
+        current.map((entry) =>
+          entry.id === incidentId ? { ...entry, status, updated_at: new Date().toISOString() } : entry
+        )
+      );
+    }
+  }
+
+  async function createDashboardAlertDestination() {
+    try {
+      const response = await apiFetch("/v1/alert-destinations", selectedProjectId, {
+        method: "POST",
+        body: JSON.stringify(newDestination)
+      });
+      if (!response.ok) throw new Error("alert_destination_create_failed");
+      const destination = (await response.json()) as AlertDestination;
+      setAlertDestinations((current) => [destination, ...current]);
+    } catch {
+      setAlertDestinations((current) => [createDemoAlertDestination(newDestination), ...current]);
+    }
+  }
+
+  async function setDashboardAlertDestinationStatus(destinationId: string, enabled: boolean) {
+    try {
+      const response = await apiFetch(`/v1/alert-destinations/${destinationId}`, selectedProjectId, {
+        method: "PATCH",
+        body: JSON.stringify({ enabled })
+      });
+      if (!response.ok) throw new Error("alert_destination_update_failed");
+      const destination = (await response.json()) as AlertDestination;
+      setAlertDestinations((current) => current.map((entry) => (entry.id === destinationId ? destination : entry)));
+    } catch {
+      setAlertDestinations((current) =>
+        current.map((entry) =>
+          entry.id === destinationId ? { ...entry, enabled, updated_at: new Date().toISOString() } : entry
+        )
+      );
+    }
   }
 
   async function loadRequests() {
@@ -323,6 +426,9 @@ function App() {
           </button>
           <button className={activeView === "api-keys" ? "active" : ""} onClick={() => changeView("api-keys")}>
             API Keys
+          </button>
+          <button className={activeView === "alerts" ? "active" : ""} onClick={() => changeView("alerts")}>
+            Alerts
           </button>
           <button className={activeView === "rpc" ? "active" : ""} onClick={() => changeView("rpc")}>
             RPC
@@ -473,7 +579,12 @@ function App() {
               </Panel>
             </section>
 
-            <IncidentPanel incidents={incidents} />
+            <IncidentPanel
+              incidents={incidents}
+              filters={incidentFilters}
+              onFilterChange={setIncidentFilters}
+              onStatusChange={(id, status) => void updateDashboardIncidentStatus(id, status)}
+            />
           </>
         )}
 
@@ -490,7 +601,14 @@ function App() {
           />
         )}
 
-        {activeView === "incidents" && <IncidentPanel incidents={incidents} />}
+        {activeView === "incidents" && (
+          <IncidentPanel
+            incidents={incidents}
+            filters={incidentFilters}
+            onFilterChange={setIncidentFilters}
+            onStatusChange={(id, status) => void updateDashboardIncidentStatus(id, status)}
+          />
+        )}
 
         {activeView === "api-keys" && (
           <ApiKeyPanel
@@ -501,6 +619,17 @@ function App() {
             onKeyNameChange={setNewKeyName}
             onCreate={() => void createDashboardApiKey()}
             onRevoke={(keyId) => void revokeDashboardApiKey(keyId)}
+          />
+        )}
+
+        {activeView === "alerts" && (
+          <AlertsPanel
+            destinations={alertDestinations}
+            deliveries={alertDeliveries}
+            form={newDestination}
+            onFormChange={setNewDestination}
+            onCreate={() => void createDashboardAlertDestination()}
+            onDestinationStatusChange={(id, enabled) => void setDashboardAlertDestinationStatus(id, enabled)}
           />
         )}
 
@@ -704,13 +833,55 @@ function RequestExplorer(props: {
   );
 }
 
-function IncidentPanel(props: { incidents: Incident[] }) {
+function IncidentPanel(props: {
+  incidents: Incident[];
+  filters: { status: string; severity: string };
+  onFilterChange: (filters: { status: string; severity: string }) => void;
+  onStatusChange: (incidentId: string, status: IncidentStatus) => void;
+}) {
+  const incidents = props.incidents.filter((incident) => {
+    if (props.filters.status && incident.status !== props.filters.status) return false;
+    if (props.filters.severity && incident.severity !== props.filters.severity) return false;
+    return true;
+  });
+
   return (
     <Panel title="Incidents">
+      <div className="incident-toolbar">
+        <label>
+          Status
+          <select
+            value={props.filters.status}
+            onChange={(event) => props.onFilterChange({ ...props.filters, status: event.target.value })}
+          >
+            <option value="">All statuses</option>
+            <option value="open">Open</option>
+            <option value="acknowledged">Acknowledged</option>
+            <option value="resolved">Resolved</option>
+            <option value="ignored">Ignored</option>
+          </select>
+        </label>
+        <label>
+          Severity
+          <select
+            value={props.filters.severity}
+            onChange={(event) => props.onFilterChange({ ...props.filters, severity: event.target.value })}
+          >
+            <option value="">All severities</option>
+            <option value="critical">Critical</option>
+            <option value="high">High</option>
+            <option value="medium">Medium</option>
+            <option value="low">Low</option>
+          </select>
+        </label>
+      </div>
       <div className="incident-list">
-        {props.incidents.map((incident) => (
+        {incidents.map((incident) => (
           <article className="incident" key={incident.id}>
-            <span className={`severity ${incident.severity}`}>{incident.severity}</span>
+            <div className="incident-badges">
+              <span className={`severity ${incident.severity}`}>{incident.severity}</span>
+              <span className={`status-badge ${incident.status}`}>{incident.status}</span>
+            </div>
             <div>
               <strong>{incident.title}</strong>
               <p>{incident.description}</p>
@@ -719,10 +890,147 @@ function IncidentPanel(props: { incidents: Incident[] }) {
                 <span>{incident.request_count ?? 1} requests</span>
                 <span>{formatIps(incident.attacker_ips)}</span>
               </div>
+              <div className="incident-actions">
+                <button
+                  className="secondary-action"
+                  onClick={() => props.onStatusChange(incident.id, "acknowledged")}
+                  disabled={incident.status === "acknowledged"}
+                >
+                  <CheckCircle2 size={15} />
+                  Acknowledge
+                </button>
+                <button
+                  className="secondary-action"
+                  onClick={() => props.onStatusChange(incident.id, "resolved")}
+                  disabled={incident.status === "resolved"}
+                >
+                  <ShieldCheck size={15} />
+                  Resolve
+                </button>
+                <button
+                  className="danger-button"
+                  onClick={() => props.onStatusChange(incident.id, "ignored")}
+                  disabled={incident.status === "ignored"}
+                >
+                  <XCircle size={15} />
+                  Ignore
+                </button>
+                {incident.status !== "open" && (
+                  <button className="secondary-action" onClick={() => props.onStatusChange(incident.id, "open")}>
+                    Reopen
+                  </button>
+                )}
+              </div>
             </div>
             <time>{new Date(incident.last_seen_at ?? incident.created_at).toLocaleString()}</time>
           </article>
         ))}
+        {incidents.length === 0 && <p className="empty-state">No incidents match the current filters.</p>}
+      </div>
+    </Panel>
+  );
+}
+
+function AlertsPanel(props: {
+  destinations: AlertDestination[];
+  deliveries: AlertDelivery[];
+  form: { name: string; url: string };
+  onFormChange: (form: { name: string; url: string }) => void;
+  onCreate: () => void;
+  onDestinationStatusChange: (destinationId: string, enabled: boolean) => void;
+}) {
+  const canCreate = props.form.name.trim().length > 1 && props.form.url.trim().length > 10;
+
+  return (
+    <Panel title="Alert Destinations">
+      <div className="alerts-layout">
+        <section className="alert-create">
+          <div>
+            <h3>Webhook destination</h3>
+            <p>Queue high and critical incident notifications for security response tooling.</p>
+          </div>
+          <label>
+            Name
+            <input
+              value={props.form.name}
+              onChange={(event) => props.onFormChange({ ...props.form, name: event.target.value })}
+            />
+          </label>
+          <label>
+            Webhook URL
+            <input
+              value={props.form.url}
+              onChange={(event) => props.onFormChange({ ...props.form, url: event.target.value })}
+            />
+          </label>
+          <button className="primary-action" onClick={props.onCreate} disabled={!canCreate}>
+            <Plus size={16} />
+            Add destination
+          </button>
+        </section>
+
+        <section className="delivery-summary">
+          <StatusItem
+            label="Destinations"
+            value={props.destinations.length}
+            active={props.destinations.some((destination) => destination.enabled)}
+            icon={<Bell size={16} />}
+          />
+          <StatusItem
+            label="Queued Deliveries"
+            value={props.deliveries.filter((delivery) => delivery.status === "queued").length}
+            active
+            icon={<Activity size={16} />}
+          />
+        </section>
+      </div>
+
+      <div className="destination-list">
+        {props.destinations.map((destination) => (
+          <article className="destination-row" key={destination.id}>
+            <span className={destination.enabled ? "destination-icon enabled" : "destination-icon disabled"}>
+              <Bell size={16} />
+            </span>
+            <div>
+              <strong>{destination.name}</strong>
+              <p>{destination.url}</p>
+            </div>
+            <span className={`status-badge ${destination.enabled ? "open" : "ignored"}`}>
+              {destination.enabled ? "enabled" : "disabled"}
+            </span>
+            <button
+              className="secondary-action"
+              onClick={() => props.onDestinationStatusChange(destination.id, !destination.enabled)}
+            >
+              {destination.enabled ? "Disable" : "Enable"}
+            </button>
+          </article>
+        ))}
+      </div>
+
+      <div className="delivery-table">
+        <h3>Recent deliveries</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>Destination</th>
+              <th>Status</th>
+              <th>Attempts</th>
+              <th>Created</th>
+            </tr>
+          </thead>
+          <tbody>
+            {props.deliveries.map((delivery) => (
+              <tr key={delivery.id}>
+                <td>{delivery.destination_name}</td>
+                <td>{delivery.status}</td>
+                <td>{delivery.attempts}</td>
+                <td>{new Date(delivery.created_at).toLocaleString()}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {props.deliveries.length === 0 && <p className="empty-state">No alert deliveries have been queued yet.</p>}
       </div>
     </Panel>
   );
@@ -899,7 +1207,7 @@ function formatCount(value: number) {
 
 function getInitialView(): DashboardView {
   const view = new URLSearchParams(window.location.search).get("view");
-  return view === "requests" || view === "incidents" || view === "api-keys" || view === "rpc"
+  return view === "requests" || view === "incidents" || view === "api-keys" || view === "alerts" || view === "rpc"
     ? view
     : "overview";
 }
@@ -923,6 +1231,13 @@ function getHeader(view: DashboardView) {
     return {
       title: "API Keys",
       subtitle: "Create and revoke project-scoped SDK credentials."
+    };
+  }
+
+  if (view === "alerts") {
+    return {
+      title: "Alerts",
+      subtitle: "Manage webhook destinations and delivery records for high-severity incidents."
     };
   }
 
@@ -973,7 +1288,9 @@ function getDemoProjectData(projectId: string) {
       overview: checkoutOverview,
       incidents: checkoutIncidents,
       requests: checkoutRequests,
-      apiKeys: checkoutApiKeys
+      apiKeys: checkoutApiKeys,
+      alertDestinations: checkoutAlertDestinations,
+      alertDeliveries: checkoutAlertDeliveries
     };
   }
 
@@ -981,7 +1298,9 @@ function getDemoProjectData(projectId: string) {
     overview: demoOverview,
     incidents: demoIncidents,
     requests: demoRequests,
-    apiKeys: demoApiKeys
+    apiKeys: demoApiKeys,
+    alertDestinations: demoAlertDestinations,
+    alertDeliveries: demoAlertDeliveries
   };
 }
 
@@ -998,6 +1317,21 @@ function createDemoApiKey(name: string): ApiKeyRecord {
     created_at: new Date().toISOString(),
     last_used_at: null,
     revoked_at: null
+  };
+}
+
+function createDemoAlertDestination(form: { name: string; url: string }): AlertDestination {
+  const suffix = Array.from(crypto.getRandomValues(new Uint8Array(4)))
+    .map((value) => value.toString(16).padStart(2, "0"))
+    .join("");
+
+  return {
+    id: `demo-alert-${suffix}`,
+    name: form.name,
+    url: form.url,
+    enabled: true,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString()
   };
 }
 
@@ -1210,6 +1544,38 @@ const demoApiKeys: ApiKeyRecord[] = [
   }
 ];
 
+const demoAlertDestinations: AlertDestination[] = [
+  {
+    id: "demo-alert-soc",
+    name: "Security Operations",
+    url: "https://alerts.example.com/sentinel",
+    enabled: true,
+    created_at: new Date(Date.now() - 1000 * 60 * 60 * 24 * 5).toISOString(),
+    updated_at: new Date(Date.now() - 1000 * 60 * 60 * 24 * 5).toISOString()
+  },
+  {
+    id: "demo-alert-pager",
+    name: "PagerDuty Intake",
+    url: "https://events.example.com/v2/enqueue",
+    enabled: false,
+    created_at: new Date(Date.now() - 1000 * 60 * 60 * 24 * 12).toISOString(),
+    updated_at: new Date(Date.now() - 1000 * 60 * 60 * 12).toISOString()
+  }
+];
+
+const demoAlertDeliveries: AlertDelivery[] = [
+  {
+    id: "delivery-1",
+    incident_id: "SC-1932",
+    destination_id: "demo-alert-soc",
+    destination_name: "Security Operations",
+    status: "queued",
+    attempts: 0,
+    created_at: new Date(Date.now() - 1000 * 60 * 6).toISOString(),
+    delivered_at: null
+  }
+];
+
 const checkoutOverview: Overview = {
   totals: {
     events: 6421,
@@ -1331,6 +1697,30 @@ const checkoutApiKeys: ApiKeyRecord[] = [
     created_at: new Date(Date.now() - 1000 * 60 * 60 * 24 * 6).toISOString(),
     last_used_at: new Date(Date.now() - 1000 * 60 * 27).toISOString(),
     revoked_at: null
+  }
+];
+
+const checkoutAlertDestinations: AlertDestination[] = [
+  {
+    id: "checkout-alert-soc",
+    name: "Checkout Security",
+    url: "https://checkout.example.com/security-alerts",
+    enabled: true,
+    created_at: new Date(Date.now() - 1000 * 60 * 60 * 24 * 3).toISOString(),
+    updated_at: new Date(Date.now() - 1000 * 60 * 60 * 24 * 3).toISOString()
+  }
+];
+
+const checkoutAlertDeliveries: AlertDelivery[] = [
+  {
+    id: "checkout-delivery-1",
+    incident_id: "SC-2210",
+    destination_id: "checkout-alert-soc",
+    destination_name: "Checkout Security",
+    status: "queued",
+    attempts: 0,
+    created_at: new Date(Date.now() - 1000 * 60 * 2).toISOString(),
+    delivered_at: null
   }
 ];
 

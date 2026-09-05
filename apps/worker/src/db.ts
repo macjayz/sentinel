@@ -100,18 +100,21 @@ export async function createIncidentIfNeeded(
 
   try {
     await client.query("begin");
+    let incidentId: string | null = null;
+    let isNewIncident = false;
 
     const existing = await client.query(
       `
       select id, attacker_ips
       from incidents
-      where incident_key = $1 and status = 'open'
+      where incident_key = $1 and status in ('open', 'acknowledged')
       for update
       `,
       [fingerprint.key]
     );
 
     if (existing.rowCount && existing.rows[0]) {
+      incidentId = existing.rows[0].id;
       const attackerIps = mergeIps(existing.rows[0].attacker_ips, fingerprint.attackerIp);
       await client.query(
         `
@@ -135,7 +138,7 @@ export async function createIncidentIfNeeded(
         ]
       );
     } else {
-      await client.query(
+      const created = await client.query(
         `
         insert into incidents (
           event_id, incident_key, project_id, severity, title, description, signals,
@@ -143,6 +146,7 @@ export async function createIncidentIfNeeded(
         )
         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, 1, $10, $10, 'open')
         on conflict (incident_key) do nothing
+        returning id
         `,
         [
           event.id,
@@ -156,6 +160,20 @@ export async function createIncidentIfNeeded(
           JSON.stringify(mergeIps([], fingerprint.attackerIp)),
           event.timestamp
         ]
+      );
+      incidentId = created.rows[0]?.id ?? null;
+      isNewIncident = Boolean(incidentId);
+    }
+
+    if (incidentId && isNewIncident && shouldQueueAlertDelivery(assessment.severity)) {
+      await client.query(
+        `
+        insert into alert_deliveries (incident_id, destination_id, project_id, status)
+        select $1, id, project_id, 'queued'
+        from alert_destinations
+        where project_id = $2 and enabled = true
+        `,
+        [incidentId, event.projectId]
       );
     }
 
@@ -176,4 +194,8 @@ function mergeIps(existing: unknown, ip?: string) {
 
 function toJsonb(value: unknown) {
   return JSON.stringify(value);
+}
+
+function shouldQueueAlertDelivery(severity: string) {
+  return severity === "high" || severity === "critical";
 }

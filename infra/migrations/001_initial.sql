@@ -120,14 +120,63 @@ create table if not exists incidents (
   started_at timestamptz not null default now(),
   last_seen_at timestamptz not null default now(),
   status text not null default 'open',
+  acknowledged_at timestamptz,
+  resolved_at timestamptz,
+  ignored_at timestamptz,
+  updated_at timestamptz not null default now(),
   created_at timestamptz not null default now()
 );
+
+alter table incidents
+  add column if not exists acknowledged_at timestamptz,
+  add column if not exists resolved_at timestamptz,
+  add column if not exists ignored_at timestamptz,
+  add column if not exists updated_at timestamptz not null default now();
 
 update incidents
 set incident_key = 'event:' || event_id
 where incident_key is null;
 
 create unique index if not exists incidents_incident_key_idx on incidents(incident_key);
+create index if not exists incidents_project_status_idx on incidents(project_id, status);
+
+create table if not exists incident_timeline (
+  id uuid primary key default gen_random_uuid(),
+  incident_id uuid not null references incidents(id) on delete cascade,
+  project_id text not null references projects(id) on delete cascade,
+  action text not null,
+  actor text not null default 'system',
+  note text,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists incident_timeline_incident_idx on incident_timeline(incident_id, created_at desc);
+
+create table if not exists alert_destinations (
+  id uuid primary key default gen_random_uuid(),
+  project_id text not null references projects(id) on delete cascade,
+  name text not null,
+  url text not null,
+  enabled boolean not null default true,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists alert_destinations_project_idx on alert_destinations(project_id, enabled);
+
+create table if not exists alert_deliveries (
+  id uuid primary key default gen_random_uuid(),
+  incident_id uuid not null references incidents(id) on delete cascade,
+  destination_id uuid not null references alert_destinations(id) on delete cascade,
+  project_id text not null references projects(id) on delete cascade,
+  status text not null default 'queued',
+  attempts int not null default 0,
+  last_error text,
+  created_at timestamptz not null default now(),
+  delivered_at timestamptz
+);
+
+create index if not exists alert_deliveries_incident_idx on alert_deliveries(incident_id, created_at desc);
 
 insert into projects (id, organization_id, name)
 values ('demo', '00000000-0000-0000-0000-000000000001', 'Demo Project')

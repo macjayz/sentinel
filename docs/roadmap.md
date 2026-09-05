@@ -19,6 +19,8 @@
 - Web3 RPC SDK with EIP-1193 and viem-compatible transport helpers
 - RPC dashboard view with method, provider, chain, latency, and threat context
 - Live local pipeline verification with Postgres, Redis, ingestion, worker persistence, incidents, and dashboard reads
+- Incident status workflows with open, acknowledged, resolved, and ignored states
+- Webhook alert destinations and queued alert delivery records
 
 ## v0.2 Product Hardening
 
@@ -28,13 +30,12 @@
 - SDK retry backoff controls
 - Worker dead-letter stream
 - Endpoint trend charts
-- Incident status updates
+- Alert delivery retries and delivery history details
 - WebSocket event fanout from worker results
 - Deeper RPC method baselines and provider reliability analytics
 
 ## v0.3 Integrations
 
-- Webhook alert destinations
 - Slack and Discord notifications
 - OpenTelemetry export
 - GitHub issue creation for incidents
