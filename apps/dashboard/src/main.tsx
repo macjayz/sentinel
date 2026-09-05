@@ -175,7 +175,7 @@ type AuthSession = {
 };
 
 const apiBase = import.meta.env.VITE_SENTINEL_API_URL ?? "http://localhost:8080";
-const dashboardApiKey = import.meta.env.VITE_SENTINEL_API_KEY;
+const dashboardApiKey = import.meta.env.VITE_SENTINEL_API_KEY ?? "dev-sentinel-key";
 
 function App() {
   const [activeView, setActiveView] = useState<DashboardView>(
