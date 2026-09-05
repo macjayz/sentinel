@@ -1,5 +1,6 @@
 import { Redis } from "ioredis";
 import { assessThreat, SentinelEventSchema, withSpan } from "@sentinel/shared";
+import { deliverPendingAlerts } from "./alerts.js";
 import { loadConfig } from "./config.js";
 import { countRecentIpRequests, createIncidentIfNeeded, createPool, persistEvent } from "./db.js";
 
@@ -63,8 +64,13 @@ export async function runWorker() {
     }
   }
 
+  async function deliverAlerts() {
+    await deliverPendingAlerts(pool);
+  }
+
   return {
     tick,
+    deliverAlerts,
     async close() {
       await redis.quit();
       await pool.end();
@@ -79,5 +85,6 @@ if (process.env.NODE_ENV !== "test") {
 
   while (true) {
     await worker.tick();
+    await worker.deliverAlerts();
   }
 }

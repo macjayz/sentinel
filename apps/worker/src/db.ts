@@ -186,6 +186,99 @@ export async function createIncidentIfNeeded(
   }
 }
 
+const MAX_ALERT_DELIVERY_ATTEMPTS = 5;
+
+export type AlertDeliveryDetails = {
+  id: string;
+  attempts: number;
+  destination_url: string;
+  destination_name: string;
+  incident_id: string;
+  title: string;
+  severity: string;
+  description: string;
+  affected_endpoint: string;
+  attacker_ips: string[];
+  request_count: number;
+  started_at: string;
+};
+
+export async function claimAlertDeliveries(pool: pg.Pool, limit = 10): Promise<AlertDeliveryDetails[]> {
+  const claimed = await pool.query(
+    `
+    update alert_deliveries
+    set status = 'sending'
+    where id in (
+      select id
+      from alert_deliveries
+      where status = 'queued' and next_attempt_at <= now()
+      order by created_at
+      limit $1
+      for update skip locked
+    )
+    returning id
+    `,
+    [limit]
+  );
+
+  const ids = claimed.rows.map((row) => row.id);
+  if (ids.length === 0) return [];
+
+  const details = await pool.query(
+    `
+    select deliveries.id, deliveries.attempts,
+           destinations.url as destination_url, destinations.name as destination_name,
+           incidents.id as incident_id, incidents.title, incidents.severity, incidents.description,
+           incidents.affected_endpoint, incidents.attacker_ips, incidents.request_count, incidents.started_at
+    from alert_deliveries deliveries
+    join alert_destinations destinations on destinations.id = deliveries.destination_id
+    join incidents on incidents.id = deliveries.incident_id
+    where deliveries.id = any($1::uuid[])
+    `,
+    [ids]
+  );
+
+  return details.rows;
+}
+
+export async function markAlertDeliverySucceeded(pool: pg.Pool, deliveryId: string) {
+  await pool.query(
+    `
+    update alert_deliveries
+    set status = 'delivered', delivered_at = now(), last_error = null
+    where id = $1
+    `,
+    [deliveryId]
+  );
+}
+
+export async function markAlertDeliveryFailed(
+  pool: pg.Pool,
+  deliveryId: string,
+  attemptsBeforeThisTry: number,
+  error: string
+) {
+  const attempts = attemptsBeforeThisTry + 1;
+
+  if (attempts >= MAX_ALERT_DELIVERY_ATTEMPTS) {
+    await pool.query(
+      `update alert_deliveries set status = 'failed', attempts = $2, last_error = $3 where id = $1`,
+      [deliveryId, attempts, error]
+    );
+    return;
+  }
+
+  const backoffSeconds = Math.min(30 * 2 ** attempts, 3600);
+  await pool.query(
+    `
+    update alert_deliveries
+    set status = 'queued', attempts = $2, last_error = $3, next_attempt_at = now() + make_interval(secs => $4)
+    where id = $1
+    `,
+    [deliveryId, attempts, error, backoffSeconds]
+  );
+}
+
 function mergeIps(existing: unknown, ip?: string) {
   const values = Array.isArray(existing) ? existing.filter((value) => typeof value === "string") : [];
   if (ip && !values.includes(ip)) values.push(ip);

@@ -172,11 +172,16 @@ create table if not exists alert_deliveries (
   status text not null default 'queued',
   attempts int not null default 0,
   last_error text,
+  next_attempt_at timestamptz not null default now(),
   created_at timestamptz not null default now(),
   delivered_at timestamptz
 );
 
+alter table alert_deliveries
+  add column if not exists next_attempt_at timestamptz not null default now();
+
 create index if not exists alert_deliveries_incident_idx on alert_deliveries(incident_id, created_at desc);
+create index if not exists alert_deliveries_pending_idx on alert_deliveries(status, next_attempt_at);
 
 insert into projects (id, organization_id, name)
 values ('demo', '00000000-0000-0000-0000-000000000001', 'Demo Project')

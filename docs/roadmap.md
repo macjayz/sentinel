@@ -21,6 +21,7 @@
 - Live local pipeline verification with Postgres, Redis, ingestion, worker persistence, incidents, and dashboard reads
 - Incident status workflows with open, acknowledged, resolved, and ignored states
 - Webhook alert destinations and queued alert delivery records
+- Webhook alert delivery with exponential backoff retries and terminal failure handling
 
 ## v0.2 Product Hardening
 
@@ -30,7 +31,7 @@
 - SDK retry backoff controls
 - Worker dead-letter stream
 - Endpoint trend charts
-- Alert delivery retries and delivery history details
+- Per-delivery response detail and delivery history drill-down
 - WebSocket event fanout from worker results
 - Deeper RPC method baselines and provider reliability analytics
 
