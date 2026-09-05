@@ -1,6 +1,6 @@
 import cors from "@fastify/cors";
 import rateLimit from "@fastify/rate-limit";
-import Fastify from "fastify";
+import Fastify, { FastifyRequest } from "fastify";
 import { z } from "zod";
 import { EventBatchSchema, withSpan } from "@sentinel/shared";
 import { loadConfig } from "./config.js";
@@ -94,12 +94,12 @@ export async function buildServer() {
   });
 
   app.get("/v1/analytics/overview", async (request, reply) => {
-    const scope = await getAnalyticsProjectScope(pool, config.sentinelApiKey, request.headers["x-sentinel-api-key"]);
+    const scope = await getAnalyticsProjectScope(pool, config.sentinelApiKey, request);
     if (!scope) return reply.code(401).send({ error: "invalid_api_key" });
     return getOverview(pool, scope.projectId);
   });
   app.get("/v1/analytics/incidents", async (request, reply) => {
-    const scope = await getAnalyticsProjectScope(pool, config.sentinelApiKey, request.headers["x-sentinel-api-key"]);
+    const scope = await getAnalyticsProjectScope(pool, config.sentinelApiKey, request);
     if (!scope) return reply.code(401).send({ error: "invalid_api_key" });
     return getIncidents(pool, scope.projectId);
   });
@@ -112,7 +112,7 @@ export async function buildServer() {
       q?: string;
       limit?: string;
     };
-    const scope = await getAnalyticsProjectScope(pool, config.sentinelApiKey, request.headers["x-sentinel-api-key"]);
+    const scope = await getAnalyticsProjectScope(pool, config.sentinelApiKey, request);
     if (!scope) return reply.code(401).send({ error: "invalid_api_key" });
 
     return getRequests(pool, {
@@ -130,13 +130,13 @@ export async function buildServer() {
   );
 
   app.get("/v1/api-keys", async (request, reply) => {
-    const scope = await getAnalyticsProjectScope(pool, config.sentinelApiKey, request.headers["x-sentinel-api-key"]);
+    const scope = await getAnalyticsProjectScope(pool, config.sentinelApiKey, request);
     if (!scope) return reply.code(401).send({ error: "invalid_api_key" });
     return listApiKeys(pool, scope.projectId);
   });
 
   app.post("/v1/api-keys", async (request, reply) => {
-    const scope = await getAnalyticsProjectScope(pool, config.sentinelApiKey, request.headers["x-sentinel-api-key"]);
+    const scope = await getAnalyticsProjectScope(pool, config.sentinelApiKey, request);
     if (!scope) return reply.code(401).send({ error: "invalid_api_key" });
 
     const parsed = CreateApiKeySchema.safeParse(request.body);
@@ -149,7 +149,7 @@ export async function buildServer() {
   });
 
   app.delete("/v1/api-keys/:id", async (request, reply) => {
-    const scope = await getAnalyticsProjectScope(pool, config.sentinelApiKey, request.headers["x-sentinel-api-key"]);
+    const scope = await getAnalyticsProjectScope(pool, config.sentinelApiKey, request);
     if (!scope) return reply.code(401).send({ error: "invalid_api_key" });
 
     const { id } = request.params as { id: string };
@@ -159,7 +159,7 @@ export async function buildServer() {
   });
 
   app.patch("/v1/incidents/:id/status", async (request, reply) => {
-    const scope = await getAnalyticsProjectScope(pool, config.sentinelApiKey, request.headers["x-sentinel-api-key"]);
+    const scope = await getAnalyticsProjectScope(pool, config.sentinelApiKey, request);
     if (!scope) return reply.code(401).send({ error: "invalid_api_key" });
 
     const parsed = UpdateIncidentStatusSchema.safeParse(request.body);
@@ -182,7 +182,7 @@ export async function buildServer() {
   });
 
   app.get("/v1/incidents/:id/timeline", async (request, reply) => {
-    const scope = await getAnalyticsProjectScope(pool, config.sentinelApiKey, request.headers["x-sentinel-api-key"]);
+    const scope = await getAnalyticsProjectScope(pool, config.sentinelApiKey, request);
     if (!scope) return reply.code(401).send({ error: "invalid_api_key" });
 
     const { id } = request.params as { id: string };
@@ -190,13 +190,13 @@ export async function buildServer() {
   });
 
   app.get("/v1/alert-destinations", async (request, reply) => {
-    const scope = await getAnalyticsProjectScope(pool, config.sentinelApiKey, request.headers["x-sentinel-api-key"]);
+    const scope = await getAnalyticsProjectScope(pool, config.sentinelApiKey, request);
     if (!scope) return reply.code(401).send({ error: "invalid_api_key" });
     return listAlertDestinations(pool, scope.projectId);
   });
 
   app.post("/v1/alert-destinations", async (request, reply) => {
-    const scope = await getAnalyticsProjectScope(pool, config.sentinelApiKey, request.headers["x-sentinel-api-key"]);
+    const scope = await getAnalyticsProjectScope(pool, config.sentinelApiKey, request);
     if (!scope) return reply.code(401).send({ error: "invalid_api_key" });
 
     const parsed = CreateAlertDestinationSchema.safeParse(request.body);
@@ -209,7 +209,7 @@ export async function buildServer() {
   });
 
   app.patch("/v1/alert-destinations/:id", async (request, reply) => {
-    const scope = await getAnalyticsProjectScope(pool, config.sentinelApiKey, request.headers["x-sentinel-api-key"]);
+    const scope = await getAnalyticsProjectScope(pool, config.sentinelApiKey, request);
     if (!scope) return reply.code(401).send({ error: "invalid_api_key" });
 
     const parsed = UpdateAlertDestinationSchema.safeParse(request.body);
@@ -224,7 +224,7 @@ export async function buildServer() {
   });
 
   app.get("/v1/alert-deliveries", async (request, reply) => {
-    const scope = await getAnalyticsProjectScope(pool, config.sentinelApiKey, request.headers["x-sentinel-api-key"]);
+    const scope = await getAnalyticsProjectScope(pool, config.sentinelApiKey, request);
     if (!scope) return reply.code(401).send({ error: "invalid_api_key" });
     return listAlertDeliveries(pool, scope.projectId);
   });
@@ -261,12 +261,14 @@ const UpdateAlertDestinationSchema = z.object({
 async function getAnalyticsProjectScope(
   pool: ReturnType<typeof createPool>,
   fallbackApiKey: string,
-  apiKeyHeader: string | string[] | undefined
+  request: FastifyRequest
 ) {
+  const apiKeyHeader = request.headers["x-sentinel-api-key"];
   if (!apiKeyHeader) return { projectId: "demo", keyId: "anonymous-demo" };
 
+  const requestedProjectId = (request.query as { projectId?: string } | undefined)?.projectId;
   const apiKey = Array.isArray(apiKeyHeader) ? apiKeyHeader[0] : apiKeyHeader;
-  return resolveProjectForApiKey(pool, apiKey, fallbackApiKey);
+  return resolveProjectForApiKey(pool, apiKey, fallbackApiKey, requestedProjectId);
 }
 
 if (process.env.NODE_ENV !== "test") {

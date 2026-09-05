@@ -28,4 +28,5 @@ Initial alpha release.
 - Verified the live local pipeline against Postgres and Redis, including SDK-style seed traffic, worker persistence, grouped incidents, normalized endpoint discovery, and queue backlog metrics.
 - Added incident status workflows, timeline records, alert destination management, and queued alert delivery records for high and critical incidents.
 - Added webhook alert delivery with atomic queue claiming, exponential backoff retries, and terminal failure handling after repeated delivery attempts.
+- Fixed the dashboard project switcher: analytics, incidents, API keys, and alerts endpoints now resolve the authenticated caller's requested project instead of always returning the demo project's data. Anonymous (unauthenticated) requests remain locked to the demo project.
 - Added CI, issue templates, contribution guide, security policy, roadmap, and dashboard screenshot.

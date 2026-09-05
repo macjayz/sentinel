@@ -66,6 +66,7 @@ services:
       dockerfile: infra/dashboard.Dockerfile
     environment:
       VITE_SENTINEL_API_URL: http://localhost:8080
+      VITE_SENTINEL_API_KEY: dev-sentinel-key
     ports:
       - "5173:5173"
     depends_on:

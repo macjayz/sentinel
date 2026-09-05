@@ -267,9 +267,14 @@ export async function getRequests(pool: pg.Pool, filters: RequestFilters = {}) {
   return result.rows;
 }
 
-export async function resolveProjectForApiKey(pool: pg.Pool, apiKey: string, fallbackApiKey: string) {
+export async function resolveProjectForApiKey(
+  pool: pg.Pool,
+  apiKey: string,
+  fallbackApiKey: string,
+  requestedProjectId?: string
+) {
   if (apiKey === fallbackApiKey) {
-    return { projectId: "demo", keyId: "env-fallback" };
+    return { projectId: requestedProjectId ?? "demo", keyId: "env-fallback" };
   }
 
   const result = await pool.query(

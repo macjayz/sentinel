@@ -58,8 +58,8 @@ const dbMocks = vi.hoisted(() => ({
 	  listAlertDestinations: dbMocks.listAlertDestinations,
 	  listApiKeys: dbMocks.listApiKeys,
 	  revokeApiKey: dbMocks.revokeApiKey,
-	  resolveProjectForApiKey: (_pool: unknown, apiKey: string) =>
-	    apiKey === "dev-sentinel-key" ? { projectId: "demo", keyId: "test" } : null,
+	  resolveProjectForApiKey: (_pool: unknown, apiKey: string, _fallback: string, requestedProjectId?: string) =>
+	    apiKey === "dev-sentinel-key" ? { projectId: requestedProjectId ?? "demo", keyId: "test" } : null,
 	  updateAlertDestination: dbMocks.updateAlertDestination,
 	  updateIncidentStatus: dbMocks.updateIncidentStatus
 	}));
@@ -144,6 +144,32 @@ describe("api server", () => {
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual([]);
     expect(dbMocks.getRequests).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ projectId: "demo" }));
+    await app.close();
+  });
+
+  it("scopes authenticated analytics to the requested project id", async () => {
+    const { app } = await buildServer();
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/analytics/overview?projectId=checkout",
+      headers: { "x-sentinel-api-key": "dev-sentinel-key" }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(dbMocks.getOverview).toHaveBeenCalledWith(expect.anything(), "checkout");
+    await app.close();
+  });
+
+  it("defaults authenticated analytics to the demo project without a projectId", async () => {
+    const { app } = await buildServer();
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/analytics/overview",
+      headers: { "x-sentinel-api-key": "dev-sentinel-key" }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(dbMocks.getOverview).toHaveBeenCalledWith(expect.anything(), "demo");
     await app.close();
   });
 
