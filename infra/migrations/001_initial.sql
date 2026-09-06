@@ -103,11 +103,33 @@ alter table api_events
   add column if not exists evm_chain_id text,
   add column if not exists evm_provider text,
   add column if not exists wallet_address text,
-  add column if not exists contract_address text;
+  add column if not exists contract_address text,
+  add column if not exists error_type text,
+  add column if not exists error_message text,
+  add column if not exists error_stack text;
+
+create table if not exists error_groups (
+  id uuid primary key default gen_random_uuid(),
+  project_id text not null references projects(id) on delete cascade,
+  fingerprint text not null,
+  error_type text not null,
+  message text not null,
+  affected_endpoint text,
+  occurrences int not null default 1,
+  affected_ips jsonb not null default '[]',
+  sample_stack text,
+  first_seen_at timestamptz not null default now(),
+  last_seen_at timestamptz not null default now(),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create unique index if not exists error_groups_fingerprint_idx on error_groups(project_id, fingerprint);
+create index if not exists error_groups_project_idx on error_groups(project_id, last_seen_at desc);
 
 create table if not exists incidents (
   id uuid primary key default gen_random_uuid(),
-  event_id text not null unique references api_events(id) on delete cascade,
+  event_id text unique references api_events(id) on delete cascade,
   incident_key text,
   project_id text not null,
   severity text not null,
@@ -132,6 +154,9 @@ alter table incidents
   add column if not exists resolved_at timestamptz,
   add column if not exists ignored_at timestamptz,
   add column if not exists updated_at timestamptz not null default now();
+
+alter table incidents
+  alter column event_id drop not null;
 
 update incidents
 set incident_key = 'event:' || event_id
@@ -163,6 +188,19 @@ create table if not exists alert_destinations (
 );
 
 create index if not exists alert_destinations_project_idx on alert_destinations(project_id, enabled);
+
+create table if not exists alert_rules (
+  id uuid primary key default gen_random_uuid(),
+  project_id text not null references projects(id) on delete cascade,
+  metric text not null,
+  threshold numeric not null,
+  window_minutes int not null default 5,
+  enabled boolean not null default true,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists alert_rules_project_idx on alert_rules(project_id, enabled);
 
 create table if not exists alert_deliveries (
   id uuid primary key default gen_random_uuid(),

@@ -58,6 +58,13 @@ export const SentinelEventSchema = z.object({
       walletAddress: z.string().optional(),
       contractAddress: z.string().optional()
     })
+    .optional(),
+  error: z
+    .object({
+      type: z.string(),
+      message: z.string(),
+      stack: z.string().optional()
+    })
     .optional()
 });
 
@@ -119,6 +126,13 @@ export function normalizeRoutePath(path: string): string {
     .join("/");
 }
 
+export function normalizeErrorMessage(message: string): string {
+  return message
+    .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/gi, ":uuid")
+    .replace(/\b\d+\b/g, "#")
+    .trim();
+}
+
 export function redactValue(value: unknown, config: RedactionConfig = {}): unknown {
   const replacement = config.replacement ?? "[REDACTED]";
   const sensitive = new Set([...defaultSensitiveFields, ...(config.fields ?? [])].map(normalizeKey));
@@ -162,6 +176,15 @@ export type ThreatAssessment = {
 
 export type TraceAttributes = Record<string, AttributeValue | undefined>;
 
+export type Web3ThreatContext = {
+  recentMethodCallCount?: number;
+  walletRecentHourTxCount?: number;
+  walletBaselineHourlyTxCount?: number;
+  providerRecentP95LatencyMs?: number;
+  providerBaselineP95LatencyMs?: number;
+  providerRecentFailureRate?: number;
+};
+
 export async function withSpan<T>(
   name: string,
   attributes: TraceAttributes,
@@ -190,7 +213,11 @@ export async function withSpan<T>(
   }
 }
 
-export function assessThreat(event: SentinelEvent, recentIpRequestCount = 0): ThreatAssessment {
+export function assessThreat(
+  event: SentinelEvent,
+  recentIpRequestCount = 0,
+  web3Context: Web3ThreatContext = {}
+): ThreatAssessment {
   const signals: ThreatSignal[] = [];
 
   if (event.response.statusCode >= 500) {
@@ -211,6 +238,47 @@ export function assessThreat(event: SentinelEvent, recentIpRequestCount = 0): Th
 
   if (event.kind === "evm_rpc" && event.evmRpc?.method.match(/send|sign|private|unlock/i)) {
     signals.push({ name: "sensitive_rpc", weight: 26, reason: "EVM RPC method can affect keys or funds" });
+  }
+
+  if (event.kind === "evm_rpc") {
+    if ((web3Context.recentMethodCallCount ?? 0) > 200) {
+      signals.push({
+        name: "rpc_flooding",
+        weight: 28,
+        reason: `${event.evmRpc?.method ?? "This RPC method"} was called far more often than normal from a single source`
+      });
+    }
+
+    const isTransactionSubmission = Boolean(event.evmRpc?.method.match(/sendrawtransaction|sendtransaction/i));
+    if (
+      isTransactionSubmission &&
+      (web3Context.walletRecentHourTxCount ?? 0) >= 10 &&
+      (web3Context.walletRecentHourTxCount ?? 0) > (web3Context.walletBaselineHourlyTxCount ?? 0) * 10
+    ) {
+      signals.push({
+        name: "tx_burst",
+        weight: 30,
+        reason: "Wallet transaction volume spiked well above its historical baseline"
+      });
+    }
+
+    const baselineLatency = web3Context.providerBaselineP95LatencyMs ?? 0;
+    const recentLatency = web3Context.providerRecentP95LatencyMs ?? 0;
+    if (baselineLatency > 0 && recentLatency > 500 && recentLatency > baselineLatency * 3) {
+      signals.push({
+        name: "provider_degradation",
+        weight: 20,
+        reason: "EVM RPC provider latency has degraded well beyond its recent baseline"
+      });
+    }
+
+    if ((web3Context.providerRecentFailureRate ?? 0) > 0.2) {
+      signals.push({
+        name: "provider_failures",
+        weight: 22,
+        reason: "EVM RPC provider is failing an abnormal share of recent requests"
+      });
+    }
   }
 
   if (event.kind === "graphql" && String(event.request.body ?? "").length > 10000) {

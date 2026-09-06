@@ -1,13 +1,25 @@
 import { Redis } from "ioredis";
 import { assessThreat, SentinelEventSchema, withSpan } from "@sentinel/shared";
 import { deliverPendingAlerts } from "./alerts.js";
+import { evaluateAlertRules } from "./alertRules.js";
 import { loadConfig } from "./config.js";
-import { countRecentIpRequests, createIncidentIfNeeded, createPool, persistEvent } from "./db.js";
+import {
+  countRecentIpRequests,
+  createIncidentIfNeeded,
+  createPool,
+  getWeb3ThreatContext,
+  persistEvent,
+  raiseAlertRuleIncident,
+  recordErrorGroup
+} from "./db.js";
+
+const ALERT_RULE_EVAL_INTERVAL_MS = 30_000;
 
 export async function runWorker() {
   const config = loadConfig();
   const redis = new Redis(config.redisUrl, { maxRetriesPerRequest: null });
   const pool = createPool(config);
+  let lastAlertRuleEvalAt = 0;
 
   try {
     await redis.xgroup("CREATE", config.streamName, config.groupName, "$", "MKSTREAM");
@@ -47,14 +59,14 @@ export async function runWorker() {
               "sentinel.kind": parsed.data.kind
             },
             async () => {
-              const recentIpRequests = await countRecentIpRequests(
-                pool,
-                parsed.data.projectId,
-                parsed.data.request.ip
-              );
-              const assessment = assessThreat(parsed.data, recentIpRequests);
+              const [recentIpRequests, web3Context] = await Promise.all([
+                countRecentIpRequests(pool, parsed.data.projectId, parsed.data.request.ip),
+                getWeb3ThreatContext(pool, parsed.data)
+              ]);
+              const assessment = assessThreat(parsed.data, recentIpRequests, web3Context);
               await persistEvent(pool, parsed.data, assessment);
               await createIncidentIfNeeded(pool, parsed.data, assessment);
+              await recordErrorGroup(pool, parsed.data);
             }
           );
         }
@@ -68,9 +80,16 @@ export async function runWorker() {
     await deliverPendingAlerts(pool);
   }
 
+  async function checkAlertRules() {
+    if (Date.now() - lastAlertRuleEvalAt < ALERT_RULE_EVAL_INTERVAL_MS) return;
+    lastAlertRuleEvalAt = Date.now();
+    await evaluateAlertRules(pool, raiseAlertRuleIncident);
+  }
+
   return {
     tick,
     deliverAlerts,
+    checkAlertRules,
     async close() {
       await redis.quit();
       await pool.end();
@@ -86,5 +105,6 @@ if (process.env.NODE_ENV !== "test") {
   while (true) {
     await worker.tick();
     await worker.deliverAlerts();
+    await worker.checkAlertRules();
   }
 }

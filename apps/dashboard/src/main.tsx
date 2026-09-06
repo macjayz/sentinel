@@ -154,7 +154,30 @@ type AlertDelivery = {
   delivered_at?: string | null;
 };
 
-type DashboardView = "overview" | "requests" | "incidents" | "api-keys" | "alerts" | "rpc";
+type AlertRuleMetric = "error_rate_percent" | "p95_latency_ms" | "max_threat_score" | "request_count" | "auth_failure_count";
+
+type AlertRule = {
+  id: string;
+  metric: AlertRuleMetric;
+  threshold: number;
+  window_minutes: number;
+  enabled: boolean;
+  created_at: string;
+  updated_at?: string;
+};
+
+type ErrorGroup = {
+  id: string;
+  error_type: string;
+  message: string;
+  affected_endpoint?: string;
+  occurrences: number;
+  affected_ips: string[];
+  first_seen_at: string;
+  last_seen_at: string;
+};
+
+type DashboardView = "overview" | "requests" | "incidents" | "errors" | "api-keys" | "alerts" | "rpc";
 
 type ProjectOption = {
   id: string;
@@ -195,9 +218,16 @@ function App() {
   const [apiKeys, setApiKeys] = useState<ApiKeyRecord[]>(demoApiKeys);
   const [alertDestinations, setAlertDestinations] = useState<AlertDestination[]>(demoAlertDestinations);
   const [alertDeliveries, setAlertDeliveries] = useState<AlertDelivery[]>(demoAlertDeliveries);
+  const [alertRules, setAlertRules] = useState<AlertRule[]>(demoAlertRules);
+  const [errorGroups, setErrorGroups] = useState<ErrorGroup[]>(demoErrorGroups);
   const [newDestination, setNewDestination] = useState({
     name: "Security Operations",
     url: "https://alerts.example.com/sentinel"
+  });
+  const [newRule, setNewRule] = useState<{ metric: AlertRuleMetric; threshold: string; windowMinutes: string }>({
+    metric: "error_rate_percent",
+    threshold: "5",
+    windowMinutes: "5"
   });
   const [incidentFilters, setIncidentFilters] = useState({ status: "open", severity: "" });
   const [newKeyName, setNewKeyName] = useState("Production SDK");
@@ -228,7 +258,9 @@ function App() {
           systemResponse,
           apiKeysResponse,
           alertDestinationsResponse,
-          alertDeliveriesResponse
+          alertDeliveriesResponse,
+          alertRulesResponse,
+          errorGroupsResponse
         ] = await Promise.all([
           apiFetch("/v1/analytics/overview", selectedProjectId),
           apiFetch("/v1/analytics/incidents", selectedProjectId),
@@ -236,7 +268,9 @@ function App() {
           apiFetch("/v1/analytics/system", selectedProjectId),
           apiFetch("/v1/api-keys", selectedProjectId),
           apiFetch("/v1/alert-destinations", selectedProjectId),
-          apiFetch("/v1/alert-deliveries", selectedProjectId)
+          apiFetch("/v1/alert-deliveries", selectedProjectId),
+          apiFetch("/v1/alert-rules", selectedProjectId),
+          apiFetch("/v1/errors", selectedProjectId)
         ]);
 
         if (
@@ -246,7 +280,9 @@ function App() {
           !systemResponse.ok ||
           !apiKeysResponse.ok ||
           !alertDestinationsResponse.ok ||
-          !alertDeliveriesResponse.ok
+          !alertDeliveriesResponse.ok ||
+          !alertRulesResponse.ok ||
+          !errorGroupsResponse.ok
         ) {
           throw new Error("analytics_unavailable");
         }
@@ -258,6 +294,8 @@ function App() {
         setApiKeys(await apiKeysResponse.json());
         setAlertDestinations(await alertDestinationsResponse.json());
         setAlertDeliveries(await alertDeliveriesResponse.json());
+        setAlertRules(await alertRulesResponse.json());
+        setErrorGroups(await errorGroupsResponse.json());
         await loadRequests();
       } catch {
         const demoData = getDemoProjectData(selectedProjectId);
@@ -269,6 +307,8 @@ function App() {
         setApiKeys(demoData.apiKeys);
         setAlertDestinations(demoData.alertDestinations);
         setAlertDeliveries(demoData.alertDeliveries);
+        setAlertRules(demoData.alertRules);
+        setErrorGroups(demoData.errorGroups);
       }
     }
 
@@ -391,6 +431,64 @@ function App() {
     setAlertDestinations((current) => current.map((entry) => (entry.id === destinationId ? destination : entry)));
   }
 
+  async function createDashboardAlertRule() {
+    setActionError(null);
+    const threshold = Number(newRule.threshold);
+    const windowMinutes = Number(newRule.windowMinutes);
+    const outcome = await submitToApi(() =>
+      apiFetch("/v1/alert-rules", selectedProjectId, {
+        method: "POST",
+        body: JSON.stringify({ metric: newRule.metric, threshold, windowMinutes })
+      })
+    );
+
+    if (outcome.kind === "unreachable") {
+      setAlertRules((current) => [
+        {
+          id: `demo-rule-${Date.now()}`,
+          metric: newRule.metric,
+          threshold,
+          window_minutes: windowMinutes,
+          enabled: true,
+          created_at: new Date().toISOString()
+        },
+        ...current
+      ]);
+      return;
+    }
+    if (outcome.kind === "rejected") {
+      setActionError(outcome.message);
+      return;
+    }
+
+    const rule = (await outcome.response.json()) as AlertRule;
+    setAlertRules((current) => [rule, ...current]);
+  }
+
+  async function setDashboardAlertRuleStatus(ruleId: string, enabled: boolean) {
+    setActionError(null);
+    const outcome = await submitToApi(() =>
+      apiFetch(`/v1/alert-rules/${ruleId}`, selectedProjectId, {
+        method: "PATCH",
+        body: JSON.stringify({ enabled })
+      })
+    );
+
+    if (outcome.kind === "rejected") {
+      setActionError(outcome.message);
+      return;
+    }
+    if (outcome.kind === "unreachable") {
+      setAlertRules((current) =>
+        current.map((entry) => (entry.id === ruleId ? { ...entry, enabled, updated_at: new Date().toISOString() } : entry))
+      );
+      return;
+    }
+
+    const rule = (await outcome.response.json()) as AlertRule;
+    setAlertRules((current) => current.map((entry) => (entry.id === ruleId ? rule : entry)));
+  }
+
   async function loadRequests() {
     const params = new URLSearchParams();
     if (requestFilters.method) params.set("method", requestFilters.method);
@@ -458,6 +556,9 @@ function App() {
           </button>
           <button className={activeView === "incidents" ? "active" : ""} onClick={() => changeView("incidents")}>
             Incidents
+          </button>
+          <button className={activeView === "errors" ? "active" : ""} onClick={() => changeView("errors")}>
+            Errors
           </button>
           <button className={activeView === "api-keys" ? "active" : ""} onClick={() => changeView("api-keys")}>
             API Keys
@@ -655,6 +756,8 @@ function App() {
           />
         )}
 
+        {activeView === "errors" && <ErrorsPanel errorGroups={errorGroups} />}
+
         {activeView === "api-keys" && (
           <ApiKeyPanel
             apiKeys={apiKeys}
@@ -675,6 +778,11 @@ function App() {
             onFormChange={setNewDestination}
             onCreate={() => void createDashboardAlertDestination()}
             onDestinationStatusChange={(id, enabled) => void setDashboardAlertDestinationStatus(id, enabled)}
+            rules={alertRules}
+            ruleForm={newRule}
+            onRuleFormChange={setNewRule}
+            onRuleCreate={() => void createDashboardAlertRule()}
+            onRuleStatusChange={(id, enabled) => void setDashboardAlertRuleStatus(id, enabled)}
           />
         )}
 
@@ -1038,6 +1146,44 @@ function IncidentPanel(props: {
   );
 }
 
+function ErrorsPanel(props: { errorGroups: ErrorGroup[] }) {
+  return (
+    <Panel title="Errors">
+      <div className="request-table">
+        <table>
+          <thead>
+            <tr>
+              <th>Type</th>
+              <th>Message</th>
+              <th>Endpoint</th>
+              <th>Occurrences</th>
+              <th>Affected IPs</th>
+              <th>First seen</th>
+              <th>Last seen</th>
+            </tr>
+          </thead>
+          <tbody>
+            {props.errorGroups.map((group) => (
+              <tr key={group.id}>
+                <td>
+                  <span className="status-badge open">{group.error_type}</span>
+                </td>
+                <td>{group.message}</td>
+                <td>{group.affected_endpoint ?? "N/A"}</td>
+                <td>{group.occurrences.toLocaleString()}</td>
+                <td>{group.affected_ips.length}</td>
+                <td>{new Date(group.first_seen_at).toLocaleDateString()}</td>
+                <td>{new Date(group.last_seen_at).toLocaleString()}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {props.errorGroups.length === 0 && <p className="empty-state">No errors captured yet.</p>}
+    </Panel>
+  );
+}
+
 function AlertsPanel(props: {
   destinations: AlertDestination[];
   deliveries: AlertDelivery[];
@@ -1045,10 +1191,17 @@ function AlertsPanel(props: {
   onFormChange: (form: { name: string; url: string }) => void;
   onCreate: () => void;
   onDestinationStatusChange: (destinationId: string, enabled: boolean) => void;
+  rules: AlertRule[];
+  ruleForm: { metric: AlertRuleMetric; threshold: string; windowMinutes: string };
+  onRuleFormChange: (form: { metric: AlertRuleMetric; threshold: string; windowMinutes: string }) => void;
+  onRuleCreate: () => void;
+  onRuleStatusChange: (ruleId: string, enabled: boolean) => void;
 }) {
   const canCreate = props.form.name.trim().length > 1 && props.form.url.trim().length > 10;
+  const canCreateRule = Number(props.ruleForm.threshold) > 0 && Number(props.ruleForm.windowMinutes) >= 1;
 
   return (
+    <>
     <Panel title="Alert Destinations">
       <div className="alerts-layout">
         <section className="alert-create">
@@ -1140,6 +1293,92 @@ function AlertsPanel(props: {
         {props.deliveries.length === 0 && <p className="empty-state">No alert deliveries have been queued yet.</p>}
       </div>
     </Panel>
+
+    <Panel title="Alert Rules">
+      <div className="alerts-layout">
+        <section className="alert-create">
+          <div>
+            <h3>Threshold rule</h3>
+            <p>Automatically raise an incident when a project-wide metric crosses a threshold.</p>
+          </div>
+          <label>
+            Metric
+            <select
+              value={props.ruleForm.metric}
+              onChange={(event) =>
+                props.onRuleFormChange({ ...props.ruleForm, metric: event.target.value as AlertRuleMetric })
+              }
+            >
+              <option value="error_rate_percent">Error rate (%)</option>
+              <option value="p95_latency_ms">p95 latency (ms)</option>
+              <option value="max_threat_score">Threat score</option>
+              <option value="request_count">Request volume</option>
+              <option value="auth_failure_count">Authentication failures</option>
+            </select>
+          </label>
+          <label>
+            Threshold
+            <input
+              inputMode="decimal"
+              value={props.ruleForm.threshold}
+              onChange={(event) => props.onRuleFormChange({ ...props.ruleForm, threshold: event.target.value })}
+            />
+          </label>
+          <label>
+            Window (minutes)
+            <input
+              inputMode="numeric"
+              value={props.ruleForm.windowMinutes}
+              onChange={(event) => props.onRuleFormChange({ ...props.ruleForm, windowMinutes: event.target.value })}
+            />
+          </label>
+          <button className="primary-action" onClick={props.onRuleCreate} disabled={!canCreateRule}>
+            <Plus size={16} />
+            Add rule
+          </button>
+        </section>
+
+        <section className="delivery-summary">
+          <StatusItem
+            label="Rules"
+            value={props.rules.length}
+            active={props.rules.some((rule) => rule.enabled)}
+            icon={<Gauge size={16} />}
+          />
+          <StatusItem
+            label="Active Rules"
+            value={props.rules.filter((rule) => rule.enabled).length}
+            active
+            icon={<Activity size={16} />}
+          />
+        </section>
+      </div>
+
+      <div className="destination-list">
+        {props.rules.map((rule) => (
+          <article className="destination-row" key={rule.id}>
+            <span className={rule.enabled ? "destination-icon enabled" : "destination-icon disabled"}>
+              <Gauge size={16} />
+            </span>
+            <div>
+              <strong>{alertRuleMetricLabel(rule.metric)}</strong>
+              <p>
+                Alerts when {formatAlertRuleThreshold(rule.metric, rule.threshold)} over {rule.window_minutes} minute
+                {rule.window_minutes === 1 ? "" : "s"}
+              </p>
+            </div>
+            <span className={`status-badge ${rule.enabled ? "open" : "ignored"}`}>
+              {rule.enabled ? "enabled" : "disabled"}
+            </span>
+            <button className="secondary-action" onClick={() => props.onRuleStatusChange(rule.id, !rule.enabled)}>
+              {rule.enabled ? "Disable" : "Enable"}
+            </button>
+          </article>
+        ))}
+      </div>
+      {props.rules.length === 0 && <p className="empty-state">No alert rules configured yet.</p>}
+    </Panel>
+    </>
   );
 }
 
@@ -1312,9 +1551,42 @@ function formatCount(value: number) {
   return value < 0 ? "N/A" : value;
 }
 
+function alertRuleMetricLabel(metric: AlertRuleMetric): string {
+  switch (metric) {
+    case "error_rate_percent":
+      return "Error rate";
+    case "p95_latency_ms":
+      return "p95 latency";
+    case "max_threat_score":
+      return "Threat score";
+    case "request_count":
+      return "Request volume";
+    case "auth_failure_count":
+      return "Authentication failures";
+    default:
+      return metric;
+  }
+}
+
+function formatAlertRuleThreshold(metric: AlertRuleMetric, threshold: number): string {
+  switch (metric) {
+    case "error_rate_percent":
+      return `> ${threshold}%`;
+    case "p95_latency_ms":
+      return `> ${threshold}ms`;
+    default:
+      return `> ${threshold}`;
+  }
+}
+
 function getInitialView(): DashboardView {
   const view = new URLSearchParams(window.location.search).get("view");
-  return view === "requests" || view === "incidents" || view === "api-keys" || view === "alerts" || view === "rpc"
+  return view === "requests" ||
+    view === "incidents" ||
+    view === "errors" ||
+    view === "api-keys" ||
+    view === "alerts" ||
+    view === "rpc"
     ? view
     : "overview";
 }
@@ -1331,6 +1603,13 @@ function getHeader(view: DashboardView) {
     return {
       title: "Incidents",
       subtitle: "Review grouped security events and their current severity."
+    };
+  }
+
+  if (view === "errors") {
+    return {
+      title: "Errors",
+      subtitle: "Application errors grouped by type, message, and endpoint."
     };
   }
 
@@ -1434,7 +1713,9 @@ function getDemoProjectData(projectId: string) {
       requests: checkoutRequests,
       apiKeys: checkoutApiKeys,
       alertDestinations: checkoutAlertDestinations,
-      alertDeliveries: checkoutAlertDeliveries
+      alertDeliveries: checkoutAlertDeliveries,
+      alertRules: demoAlertRules,
+      errorGroups: demoErrorGroups
     };
   }
 
@@ -1444,7 +1725,9 @@ function getDemoProjectData(projectId: string) {
     requests: demoRequests,
     apiKeys: demoApiKeys,
     alertDestinations: demoAlertDestinations,
-    alertDeliveries: demoAlertDeliveries
+    alertDeliveries: demoAlertDeliveries,
+    alertRules: demoAlertRules,
+    errorGroups: demoErrorGroups
   };
 }
 
@@ -1717,6 +2000,38 @@ const demoAlertDeliveries: AlertDelivery[] = [
     attempts: 0,
     created_at: new Date(Date.now() - 1000 * 60 * 6).toISOString(),
     delivered_at: null
+  }
+];
+
+const demoAlertRules: AlertRule[] = [
+  {
+    id: "demo-rule-error-rate",
+    metric: "error_rate_percent",
+    threshold: 5,
+    window_minutes: 5,
+    enabled: true,
+    created_at: new Date(Date.now() - 1000 * 60 * 60 * 24).toISOString()
+  },
+  {
+    id: "demo-rule-p95-latency",
+    metric: "p95_latency_ms",
+    threshold: 1000,
+    window_minutes: 5,
+    enabled: true,
+    created_at: new Date(Date.now() - 1000 * 60 * 60 * 24).toISOString()
+  }
+];
+
+const demoErrorGroups: ErrorGroup[] = [
+  {
+    id: "demo-error-1",
+    error_type: "TypeError",
+    message: "Cannot read property 'email' of undefined",
+    affected_endpoint: "POST /api/users/:id",
+    occurrences: 8923,
+    affected_ips: ["203.0.113.14", "203.0.113.22", "198.51.100.9"],
+    first_seen_at: new Date(Date.now() - 1000 * 60 * 60 * 24 * 15).toISOString(),
+    last_seen_at: new Date(Date.now() - 1000 * 60 * 4).toISOString()
   }
 ];
 

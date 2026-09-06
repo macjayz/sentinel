@@ -189,6 +189,72 @@ export async function updateAlertDestination(
   return result.rows[0] ?? null;
 }
 
+export const AlertRuleMetrics = [
+  "error_rate_percent",
+  "p95_latency_ms",
+  "max_threat_score",
+  "request_count",
+  "auth_failure_count"
+] as const;
+
+export type AlertRuleMetric = (typeof AlertRuleMetrics)[number];
+
+export async function listAlertRules(pool: pg.Pool, projectId: string) {
+  const result = await pool.query(
+    `
+    select id, metric, threshold, window_minutes, enabled, created_at, updated_at
+    from alert_rules
+    where project_id = $1
+    order by created_at desc
+    `,
+    [projectId]
+  );
+
+  return result.rows;
+}
+
+export async function createAlertRule(
+  pool: pg.Pool,
+  projectId: string,
+  metric: AlertRuleMetric,
+  threshold: number,
+  windowMinutes: number
+) {
+  const result = await pool.query(
+    `
+    insert into alert_rules (project_id, metric, threshold, window_minutes)
+    values ($1, $2, $3, $4)
+    returning id, metric, threshold, window_minutes, enabled, created_at, updated_at
+    `,
+    [projectId, metric, threshold, windowMinutes]
+  );
+
+  return result.rows[0];
+}
+
+export async function updateAlertRule(
+  pool: pg.Pool,
+  projectId: string,
+  ruleId: string,
+  updates: { enabled?: boolean; threshold?: number; windowMinutes?: number }
+) {
+  const result = await pool.query(
+    `
+    update alert_rules
+    set
+      enabled = coalesce($3, enabled),
+      threshold = coalesce($4, threshold),
+      window_minutes = coalesce($5, window_minutes),
+      updated_at = now()
+    where id = $1 and project_id = $2
+    returning id, metric, threshold, window_minutes, enabled, created_at, updated_at
+    `,
+    [ruleId, projectId, updates.enabled ?? null, updates.threshold ?? null, updates.windowMinutes ?? null]
+  );
+
+  return result.rows[0] ?? null;
+}
+
 export async function listAlertDeliveries(pool: pg.Pool, projectId: string) {
   const result = await pool.query(
     `
@@ -199,6 +265,22 @@ export async function listAlertDeliveries(pool: pg.Pool, projectId: string) {
     where deliveries.project_id = $1
     order by deliveries.created_at desc
     limit 50
+    `,
+    [projectId]
+  );
+
+  return result.rows;
+}
+
+export async function listErrorGroups(pool: pg.Pool, projectId: string) {
+  const result = await pool.query(
+    `
+    select id, error_type, message, affected_endpoint, occurrences, affected_ips,
+           first_seen_at, last_seen_at
+    from error_groups
+    where project_id = $1
+    order by last_seen_at desc
+    limit 100
     `,
     [projectId]
   );

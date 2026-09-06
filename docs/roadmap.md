@@ -22,6 +22,9 @@
 - Incident status workflows with open, acknowledged, resolved, and ignored states
 - Webhook alert destinations and queued alert delivery records
 - Webhook alert delivery with exponential backoff retries and terminal failure handling
+- Web3 threat rules: RPC method flooding, wallet transaction bursts, provider latency degradation, and elevated provider failure rates
+- Configurable alert rule engine: error rate, p95 latency, threat score, request volume, and authentication failure thresholds that raise incidents through the existing alert delivery pipeline
+- Application error grouping: SDK error capture, worker-side fingerprinting by type/message/endpoint, and a dashboard Errors view with occurrence counts and affected IPs
 
 ## v0.2 Product Hardening
 
@@ -33,7 +36,8 @@
 - Endpoint trend charts
 - Per-delivery response detail and delivery history drill-down
 - WebSocket event fanout from worker results
-- Deeper RPC method baselines and provider reliability analytics
+- Configurable web3 threat rule thresholds
+- Error group detail view with sample stack traces and occurrence history
 
 ## v0.3 Integrations
 

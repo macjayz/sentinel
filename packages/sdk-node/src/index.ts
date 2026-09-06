@@ -21,6 +21,15 @@ export type SentinelMiddlewareOptions = {
   maxBatchSize?: number;
 };
 
+type RequestWithCapturedError = Request & { sentinelError?: unknown };
+
+export function sentinelErrorHandler() {
+  return function sentinelErrorMiddleware(err: unknown, req: Request, _res: Response, next: NextFunction) {
+    (req as RequestWithCapturedError).sentinelError = err;
+    next(err);
+  };
+}
+
 export function sentinelExpress(options: SentinelMiddlewareOptions) {
   const client = new SentinelClient(options);
 
@@ -86,6 +95,17 @@ export function sentinelExpress(options: SentinelMiddlewareOptions) {
 
       if (kind === "evm_rpc" && isRecord(body) && typeof body.method === "string") {
         event.evmRpc = { method: body.method, chainId: headers["x-chain-id"] };
+      }
+
+      const capturedError = (req as RequestWithCapturedError).sentinelError;
+      if (capturedError instanceof Error) {
+        event.error = {
+          type: capturedError.name || "Error",
+          message: capturedError.message,
+          stack: capturedError.stack
+        };
+      } else if (capturedError !== undefined) {
+        event.error = { type: "Error", message: String(capturedError) };
       }
 
       client.capture(event);

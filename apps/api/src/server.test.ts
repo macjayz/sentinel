@@ -43,11 +43,31 @@ const dbMocks = vi.hoisted(() => ({
 	    enabled: false,
 	    created_at: new Date().toISOString()
 	  })),
-	  listAlertDeliveries: vi.fn(() => [])
+	  listAlertDeliveries: vi.fn(() => []),
+	  listAlertRules: vi.fn(() => []),
+	  createAlertRule: vi.fn(() => ({
+	    id: "rule-1",
+	    metric: "error_rate_percent",
+	    threshold: 5,
+	    window_minutes: 5,
+	    enabled: true,
+	    created_at: new Date().toISOString()
+	  })),
+	  updateAlertRule: vi.fn(() => ({
+	    id: "rule-1",
+	    metric: "error_rate_percent",
+	    threshold: 5,
+	    window_minutes: 5,
+	    enabled: false,
+	    created_at: new Date().toISOString()
+	  })),
+	  listErrorGroups: vi.fn(() => [])
 	}));
-	
+
 	vi.mock("./db.js", () => ({
+	  AlertRuleMetrics: ["error_rate_percent", "p95_latency_ms", "max_threat_score", "request_count", "auth_failure_count"],
 	  createAlertDestination: dbMocks.createAlertDestination,
+	  createAlertRule: dbMocks.createAlertRule,
 	  createApiKey: dbMocks.createApiKey,
 	  createPool: () => ({ end: vi.fn() }),
 	  getIncidentTimeline: dbMocks.getIncidentTimeline,
@@ -56,11 +76,14 @@ const dbMocks = vi.hoisted(() => ({
 	  getRequests: dbMocks.getRequests,
 	  listAlertDeliveries: dbMocks.listAlertDeliveries,
 	  listAlertDestinations: dbMocks.listAlertDestinations,
+	  listAlertRules: dbMocks.listAlertRules,
 	  listApiKeys: dbMocks.listApiKeys,
+	  listErrorGroups: dbMocks.listErrorGroups,
 	  revokeApiKey: dbMocks.revokeApiKey,
 	  resolveProjectForApiKey: (_pool: unknown, apiKey: string, _fallback: string, requestedProjectId?: string) =>
 	    apiKey === "dev-sentinel-key" ? { projectId: requestedProjectId ?? "demo", keyId: "test" } : null,
 	  updateAlertDestination: dbMocks.updateAlertDestination,
+	  updateAlertRule: dbMocks.updateAlertRule,
 	  updateIncidentStatus: dbMocks.updateIncidentStatus
 	}));
 
@@ -269,6 +292,73 @@ describe("api server", () => {
 	      "destination-1",
 	      false
 	    );
+	    await app.close();
+	  });
+
+	  it("creates alert rules within project scope", async () => {
+	    const { app } = await buildServer();
+	    const response = await app.inject({
+	      method: "POST",
+	      url: "/v1/alert-rules",
+	      headers: { "x-sentinel-api-key": "dev-sentinel-key" },
+	      payload: { metric: "error_rate_percent", threshold: 5, windowMinutes: 5 }
+	    });
+
+	    expect(response.statusCode).toBe(201);
+	    expect(dbMocks.createAlertRule).toHaveBeenCalledWith(expect.anything(), "demo", "error_rate_percent", 5, 5);
+	    await app.close();
+	  });
+
+	  it("rejects alert rules with an unknown metric", async () => {
+	    const { app } = await buildServer();
+	    const response = await app.inject({
+	      method: "POST",
+	      url: "/v1/alert-rules",
+	      headers: { "x-sentinel-api-key": "dev-sentinel-key" },
+	      payload: { metric: "not_a_real_metric", threshold: 5, windowMinutes: 5 }
+	    });
+
+	    expect(response.statusCode).toBe(400);
+	    await app.close();
+	  });
+
+	  it("updates alert rule thresholds within project scope", async () => {
+	    const { app } = await buildServer();
+	    const response = await app.inject({
+	      method: "PATCH",
+	      url: "/v1/alert-rules/rule-1",
+	      headers: { "x-sentinel-api-key": "dev-sentinel-key" },
+	      payload: { enabled: false }
+	    });
+
+	    expect(response.statusCode).toBe(200);
+	    expect(dbMocks.updateAlertRule).toHaveBeenCalledWith(expect.anything(), "demo", "rule-1", { enabled: false });
+	    await app.close();
+	  });
+
+	  it("rejects an alert rule update with no fields", async () => {
+	    const { app } = await buildServer();
+	    const response = await app.inject({
+	      method: "PATCH",
+	      url: "/v1/alert-rules/rule-1",
+	      headers: { "x-sentinel-api-key": "dev-sentinel-key" },
+	      payload: {}
+	    });
+
+	    expect(response.statusCode).toBe(400);
+	    await app.close();
+	  });
+
+	  it("lists grouped errors within project scope", async () => {
+	    const { app } = await buildServer();
+	    const response = await app.inject({
+	      method: "GET",
+	      url: "/v1/errors",
+	      headers: { "x-sentinel-api-key": "dev-sentinel-key" }
+	    });
+
+	    expect(response.statusCode).toBe(200);
+	    expect(dbMocks.listErrorGroups).toHaveBeenCalledWith(expect.anything(), "demo");
 	    await app.close();
 	  });
 	});

@@ -5,7 +5,9 @@ import { z } from "zod";
 import { EventBatchSchema, withSpan } from "@sentinel/shared";
 import { loadConfig } from "./config.js";
 import {
+  AlertRuleMetrics,
   createAlertDestination,
+  createAlertRule,
   createApiKey,
   createPool,
   getIncidentTimeline,
@@ -14,10 +16,13 @@ import {
   getRequests,
   listAlertDeliveries,
   listAlertDestinations,
+  listAlertRules,
   listApiKeys,
+  listErrorGroups,
   revokeApiKey,
   resolveProjectForApiKey,
   updateAlertDestination,
+  updateAlertRule,
   updateIncidentStatus
 } from "./db.js";
 import { attachLiveServer } from "./live.js";
@@ -229,6 +234,52 @@ export async function buildServer() {
     return listAlertDeliveries(pool, scope.projectId);
   });
 
+  app.get("/v1/alert-rules", async (request, reply) => {
+    const scope = await getAnalyticsProjectScope(pool, config.sentinelApiKey, request);
+    if (!scope) return reply.code(401).send({ error: "invalid_api_key" });
+    return listAlertRules(pool, scope.projectId);
+  });
+
+  app.get("/v1/errors", async (request, reply) => {
+    const scope = await getAnalyticsProjectScope(pool, config.sentinelApiKey, request);
+    if (!scope) return reply.code(401).send({ error: "invalid_api_key" });
+    return listErrorGroups(pool, scope.projectId);
+  });
+
+  app.post("/v1/alert-rules", async (request, reply) => {
+    const scope = await getAnalyticsProjectScope(pool, config.sentinelApiKey, request);
+    if (!scope) return reply.code(401).send({ error: "invalid_api_key" });
+
+    const parsed = CreateAlertRuleSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: "invalid_alert_rule_payload", details: parsed.error.flatten() });
+    }
+
+    const rule = await createAlertRule(
+      pool,
+      scope.projectId,
+      parsed.data.metric,
+      parsed.data.threshold,
+      parsed.data.windowMinutes
+    );
+    return reply.code(201).send(rule);
+  });
+
+  app.patch("/v1/alert-rules/:id", async (request, reply) => {
+    const scope = await getAnalyticsProjectScope(pool, config.sentinelApiKey, request);
+    if (!scope) return reply.code(401).send({ error: "invalid_api_key" });
+
+    const parsed = UpdateAlertRuleSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: "invalid_alert_rule_payload", details: parsed.error.flatten() });
+    }
+
+    const { id } = request.params as { id: string };
+    const rule = await updateAlertRule(pool, scope.projectId, id, parsed.data);
+    if (!rule) return reply.code(404).send({ error: "alert_rule_not_found" });
+    return rule;
+  });
+
   app.addHook("onClose", async () => {
     liveHub.close();
     await redis.quit();
@@ -257,6 +308,22 @@ const CreateAlertDestinationSchema = z.object({
 const UpdateAlertDestinationSchema = z.object({
   enabled: z.boolean()
 });
+
+const CreateAlertRuleSchema = z.object({
+  metric: z.enum(AlertRuleMetrics),
+  threshold: z.number().positive(),
+  windowMinutes: z.number().int().min(1).max(1440).default(5)
+});
+
+const UpdateAlertRuleSchema = z
+  .object({
+    enabled: z.boolean().optional(),
+    threshold: z.number().positive().optional(),
+    windowMinutes: z.number().int().min(1).max(1440).optional()
+  })
+  .refine((value) => value.enabled !== undefined || value.threshold !== undefined || value.windowMinutes !== undefined, {
+    message: "At least one of enabled, threshold, or windowMinutes must be provided."
+  });
 
 async function getAnalyticsProjectScope(
   pool: ReturnType<typeof createPool>,
