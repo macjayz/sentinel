@@ -44,6 +44,17 @@ create table if not exists project_memberships (
   unique (project_id, user_id)
 );
 
+create table if not exists sessions (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references users(id) on delete cascade,
+  token_hash text not null unique,
+  created_at timestamptz not null default now(),
+  expires_at timestamptz not null
+);
+
+create index if not exists sessions_token_hash_idx on sessions(token_hash);
+create index if not exists sessions_user_idx on sessions(user_id);
+
 create table if not exists api_keys (
   id uuid primary key default gen_random_uuid(),
   project_id text not null references projects(id) on delete cascade,

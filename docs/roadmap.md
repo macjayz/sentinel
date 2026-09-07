@@ -25,11 +25,12 @@
 - Web3 threat rules: RPC method flooding, wallet transaction bursts, provider latency degradation, and elevated provider failure rates
 - Configurable alert rule engine: error rate, p95 latency, threat score, request volume, and authentication failure thresholds that raise incidents through the existing alert delivery pipeline
 - Application error grouping: SDK error capture, worker-side fingerprinting by type/message/endpoint, and a dashboard Errors view with occurrence counts and affected IPs
+- Real dashboard authentication: password-hashed accounts, hashed session tokens, and server-enforced project roles (owner/admin/developer/viewer) on mutating routes
 
 ## v0.2 Product Hardening
 
 - Project management UI
-- Backed password sessions for the dashboard
+- User management UI: invite or create additional dashboard accounts and assign project roles
 - API key rotation and scoped permissions
 - SDK retry backoff controls
 - Worker dead-letter stream

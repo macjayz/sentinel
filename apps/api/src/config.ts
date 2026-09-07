@@ -5,6 +5,8 @@ export type ApiConfig = {
   sentinelApiKey: string;
   streamName: string;
   groupName: string;
+  adminEmail: string;
+  adminPassword: string;
 };
 
 export function loadConfig(): ApiConfig {
@@ -14,6 +16,8 @@ export function loadConfig(): ApiConfig {
     redisUrl: process.env.REDIS_URL ?? "redis://localhost:6379",
     sentinelApiKey: process.env.SENTINEL_API_KEY ?? "dev-sentinel-key",
     streamName: process.env.SENTINEL_STREAM ?? "sentinel:events",
-    groupName: process.env.SENTINEL_GROUP ?? "sentinel-workers"
+    groupName: process.env.SENTINEL_GROUP ?? "sentinel-workers",
+    adminEmail: process.env.SENTINEL_ADMIN_EMAIL ?? "owner@sentinel.local",
+    adminPassword: process.env.SENTINEL_ADMIN_PASSWORD ?? "sentinel-demo"
   };
 }

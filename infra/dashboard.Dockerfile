@@ -3,6 +3,7 @@ WORKDIR /app
 COPY package.json package-lock.json* tsconfig.json ./
 COPY packages ./packages
 COPY apps/dashboard ./apps/dashboard
-RUN npm install
+RUN npm install && chown -R node:node /app
+USER node
 EXPOSE 5173
 CMD ["npm", "run", "dev", "-w", "apps/dashboard"]

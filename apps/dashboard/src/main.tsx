@@ -187,7 +187,6 @@ type ProjectOption = {
 
 type AuthSession = {
   user: {
-    name: string;
     email: string;
   };
   organization: {
@@ -200,18 +199,25 @@ type AuthSession = {
 const apiBase = import.meta.env.VITE_SENTINEL_API_URL ?? "http://localhost:8080";
 const dashboardApiKey = import.meta.env.VITE_SENTINEL_API_KEY ?? "dev-sentinel-key";
 
+// Kept in sync with the `sessionToken` state via an effect below. apiFetch is a standalone
+// function (not a hook), so it reads the current token from here rather than from props.
+let currentSessionToken: string | null = null;
+
 function App() {
   const [activeView, setActiveView] = useState<DashboardView>(
     getInitialView()
   );
-  const [isAuthenticated, setIsAuthenticated] = useState(
-    () => window.localStorage.getItem("sentinel.dashboard.session") === "active"
+  const [session, setSession] = useState<AuthSession | null>(null);
+  const [sessionToken, setSessionToken] = useState<string | null>(
+    () => window.localStorage.getItem("sentinel.dashboard.token")
   );
-  const [session] = useState<AuthSession>(demoSession);
+  const [initializing, setInitializing] = useState(true);
   const [selectedProjectId, setSelectedProjectId] = useState(
-    () => window.localStorage.getItem("sentinel.dashboard.project") ?? demoSession.projects[0].id
+    () => window.localStorage.getItem("sentinel.dashboard.project") ?? "demo"
   );
   const [authForm, setAuthForm] = useState({ email: "owner@sentinel.local", password: "" });
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [authSubmitting, setAuthSubmitting] = useState(false);
   const [overview, setOverview] = useState<Overview | null>(null);
   const [incidents, setIncidents] = useState<Incident[]>([]);
   const [requests, setRequests] = useState<RequestRecord[]>(demoRequests);
@@ -243,11 +249,85 @@ function App() {
   const [systemMetrics, setSystemMetrics] = useState<SystemMetrics>(demoSystemMetrics);
   const [liveStatus, setLiveStatus] = useState("Connecting");
   const [actionError, setActionError] = useState<string | null>(null);
-  const selectedProject =
-    session.projects.find((project) => project.id === selectedProjectId) ?? session.projects[0];
 
   useEffect(() => {
-    if (!isAuthenticated) return;
+    currentSessionToken = sessionToken;
+  }, [sessionToken]);
+
+  useEffect(() => {
+    if (!sessionToken) {
+      setInitializing(false);
+      return;
+    }
+
+    (async () => {
+      try {
+        const response = await fetch(new URL("/v1/auth/session", apiBase), {
+          headers: { authorization: `Bearer ${sessionToken}` }
+        });
+        if (!response.ok) throw new Error("invalid_session");
+        setSession((await response.json()) as AuthSession);
+      } catch {
+        window.localStorage.removeItem("sentinel.dashboard.token");
+        currentSessionToken = null;
+        setSessionToken(null);
+      } finally {
+        setInitializing(false);
+      }
+    })();
+  }, []);
+
+  async function loginToDashboard() {
+    setAuthError(null);
+    setAuthSubmitting(true);
+    try {
+      const response = await fetch(new URL("/v1/auth/login", apiBase), {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(authForm)
+      });
+
+      if (!response.ok) {
+        setAuthError(await readErrorMessage(response));
+        return;
+      }
+
+      const data = (await response.json()) as AuthSession & { token: string };
+      window.localStorage.setItem("sentinel.dashboard.token", data.token);
+      currentSessionToken = data.token;
+      setSessionToken(data.token);
+      setSession({ user: data.user, organization: data.organization, projects: data.projects });
+      setSelectedProjectId((current) =>
+        data.projects.some((project) => project.id === current) ? current : (data.projects[0]?.id ?? "demo")
+      );
+    } catch {
+      setAuthError("Could not reach the Sentinel API. Confirm the API is running and reachable.");
+    } finally {
+      setAuthSubmitting(false);
+    }
+  }
+
+  async function logoutFromDashboard() {
+    const token = sessionToken;
+    window.localStorage.removeItem("sentinel.dashboard.token");
+    currentSessionToken = null;
+    setSessionToken(null);
+    setSession(null);
+
+    if (token) {
+      try {
+        await fetch(new URL("/v1/auth/logout", apiBase), {
+          method: "POST",
+          headers: { authorization: `Bearer ${token}` }
+        });
+      } catch {
+        // Best-effort — the local session is already cleared either way.
+      }
+    }
+  }
+
+  useEffect(() => {
+    if (!session) return;
 
     async function load() {
       try {
@@ -315,7 +395,7 @@ function App() {
     void load();
     const interval = window.setInterval(() => void load(), 15000);
     return () => window.clearInterval(interval);
-  }, [isAuthenticated, requestFilters, selectedProjectId]);
+  }, [session, requestFilters, selectedProjectId]);
 
   async function createDashboardApiKey() {
     setActionError(null);
@@ -504,7 +584,7 @@ function App() {
   }
 
   useEffect(() => {
-    if (!isAuthenticated) return;
+    if (!session) return;
 
     const liveUrl = apiBase.replace(/^http/, "ws") + "/live";
     const socket = new WebSocket(liveUrl);
@@ -514,7 +594,7 @@ function App() {
     socket.addEventListener("message", () => setLiveStatus("Event received"));
 
     return () => socket.close();
-  }, [isAuthenticated]);
+  }, [session]);
 
   const maxThreatScore = useMemo(() => {
     const endpointScores = overview?.endpoints.map((endpoint) => endpoint.max_threat_score) ?? [];
@@ -523,19 +603,28 @@ function App() {
   }, [overview]);
   const header = getHeader(activeView);
 
-  if (!isAuthenticated) {
+  if (initializing) {
+    return (
+      <main className="auth-shell">
+        <p>Loading...</p>
+      </main>
+    );
+  }
+
+  if (!session) {
     return (
       <AuthScreen
         form={authForm}
         onChange={setAuthForm}
-        onSubmit={() => {
-          window.localStorage.setItem("sentinel.dashboard.session", "active");
-          window.localStorage.setItem("sentinel.dashboard.project", selectedProjectId);
-          setIsAuthenticated(true);
-        }}
+        onSubmit={() => void loginToDashboard()}
+        error={authError}
+        submitting={authSubmitting}
       />
     );
   }
+
+  const selectedProject =
+    session.projects.find((project) => project.id === selectedProjectId) ?? session.projects[0];
 
   return (
     <main className="shell">
@@ -579,8 +668,8 @@ function App() {
             <User size={16} />
           </span>
           <div>
-            <strong>{session.user.name}</strong>
-            <p>{selectedProject.role}</p>
+            <strong>{session.user.email}</strong>
+            <p>{selectedProject?.role ?? "viewer"}</p>
           </div>
         </div>
       </aside>
@@ -612,14 +701,7 @@ function App() {
               <Radio size={16} />
               {liveStatus}
             </div>
-            <button
-              className="icon-button"
-              onClick={() => {
-                window.localStorage.removeItem("sentinel.dashboard.session");
-                setIsAuthenticated(false);
-              }}
-              title="Sign out"
-            >
+            <button className="icon-button" onClick={() => void logoutFromDashboard()} title="Sign out">
               <LogOut size={16} />
             </button>
           </div>
@@ -803,8 +885,10 @@ function AuthScreen(props: {
   form: { email: string; password: string };
   onChange: (form: { email: string; password: string }) => void;
   onSubmit: () => void;
+  error: string | null;
+  submitting: boolean;
 }) {
-  const canSubmit = props.form.email.length > 0 && props.form.password.length > 0;
+  const canSubmit = props.form.email.length > 0 && props.form.password.length > 0 && !props.submitting;
 
   return (
     <main className="auth-shell">
@@ -827,6 +911,11 @@ function AuthScreen(props: {
             if (canSubmit) props.onSubmit();
           }}
         >
+          {props.error && (
+            <p className="auth-error" role="alert">
+              {props.error}
+            </p>
+          )}
           <label>
             Email
             <input
@@ -842,12 +931,12 @@ function AuthScreen(props: {
               type="password"
               value={props.form.password}
               onChange={(event) => props.onChange({ ...props.form, password: event.target.value })}
-              placeholder="Enter a demo password"
+              placeholder="Enter your password"
             />
           </label>
           <button disabled={!canSubmit}>
             <KeyRound size={16} />
-            Sign in
+            {props.submitting ? "Signing in..." : "Sign in"}
           </button>
         </form>
       </section>
@@ -1663,6 +1752,7 @@ async function apiFetch(path: string, projectId: string, init: RequestInit = {})
     headers: {
       ...(init.body ? { "content-type": "application/json" } : {}),
       ...(dashboardApiKey ? { "x-sentinel-api-key": dashboardApiKey } : {}),
+      ...(currentSessionToken ? { authorization: `Bearer ${currentSessionToken}` } : {}),
       ...init.headers
     }
   });
@@ -1761,21 +1851,6 @@ function createDemoAlertDestination(form: { name: string; url: string }): AlertD
     updated_at: new Date().toISOString()
   };
 }
-
-const demoSession: AuthSession = {
-  user: {
-    name: "Demo Owner",
-    email: "owner@sentinel.local"
-  },
-  organization: {
-    id: "demo-org",
-    name: "Demo Organization"
-  },
-  projects: [
-    { id: "demo", name: "Demo API", role: "owner" },
-    { id: "checkout", name: "Checkout API", role: "developer" }
-  ]
-};
 
 const demoOverview: Overview = {
   totals: {

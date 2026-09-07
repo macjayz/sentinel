@@ -3,6 +3,7 @@ import rateLimit from "@fastify/rate-limit";
 import Fastify, { FastifyRequest } from "fastify";
 import { z } from "zod";
 import { EventBatchSchema, withSpan } from "@sentinel/shared";
+import { roleMeetsMinimum, verifyPassword } from "./auth.js";
 import { loadConfig } from "./config.js";
 import {
   AlertRuleMetrics,
@@ -10,17 +11,24 @@ import {
   createAlertRule,
   createApiKey,
   createPool,
+  createSession,
+  deleteSession,
+  ensureBootstrapUser,
   getIncidentTimeline,
   getIncidents,
   getOverview,
+  getProjectRole,
   getRequests,
+  getUserByEmail,
   listAlertDeliveries,
   listAlertDestinations,
   listAlertRules,
   listApiKeys,
   listErrorGroups,
+  listMembershipsForUser,
   revokeApiKey,
   resolveProjectForApiKey,
+  resolveSession,
   updateAlertDestination,
   updateAlertRule,
   updateIncidentStatus
@@ -41,6 +49,8 @@ export async function buildServer() {
   const redis = createRedis(config);
   const metrics = createRuntimeMetrics();
   const liveHub = attachLiveServer(app.server);
+
+  await ensureBootstrapUser(pool, "demo", config.adminEmail, config.adminPassword);
 
   await app.register(cors, { origin: true });
   await app.register(rateLimit, { max: 600, timeWindow: "1 minute" });
@@ -98,6 +108,66 @@ export async function buildServer() {
     );
   });
 
+  app.post(
+    "/v1/auth/login",
+    {
+      config: {
+        rateLimit: {
+          max: 10,
+          timeWindow: "1 minute"
+        }
+      }
+    },
+    async (request, reply) => {
+      const parsed = LoginSchema.safeParse(request.body);
+      if (!parsed.success) {
+        return reply.code(400).send({ error: "invalid_login_payload", details: parsed.error.flatten() });
+      }
+
+      const user = await getUserByEmail(pool, parsed.data.email);
+      if (!user || !(await verifyPassword(parsed.data.password, user.password_hash))) {
+        return reply.code(401).send({ error: "invalid_credentials" });
+      }
+
+      const session = await createSession(pool, user.id);
+      const memberships = await listMembershipsForUser(pool, user.id);
+
+      return reply.code(200).send({
+        token: session.token,
+        expiresAt: session.expiresAt,
+        user: { id: user.id, email: user.email },
+        organization: { id: user.organization_id, name: user.organization_name },
+        projects: memberships.map((membership) => ({
+          id: membership.project_id,
+          name: membership.name,
+          role: membership.role
+        }))
+      });
+    }
+  );
+
+  app.get("/v1/auth/session", async (request, reply) => {
+    const session = await resolveSession(pool, getBearerToken(request));
+    if (!session) return reply.code(401).send({ error: "invalid_session" });
+
+    const memberships = await listMembershipsForUser(pool, session.userId);
+    return {
+      user: { id: session.userId, email: session.email },
+      organization: { id: session.organizationId, name: session.organizationName },
+      projects: memberships.map((membership) => ({
+        id: membership.project_id,
+        name: membership.name,
+        role: membership.role
+      }))
+    };
+  });
+
+  app.post("/v1/auth/logout", async (request, reply) => {
+    const token = getBearerToken(request);
+    if (token) await deleteSession(pool, token);
+    return reply.code(204).send();
+  });
+
   app.get("/v1/analytics/overview", async (request, reply) => {
     const scope = await getAnalyticsProjectScope(pool, config.sentinelApiKey, request);
     if (!scope) return reply.code(401).send({ error: "invalid_api_key" });
@@ -143,6 +213,7 @@ export async function buildServer() {
   app.post("/v1/api-keys", async (request, reply) => {
     const scope = await getAnalyticsProjectScope(pool, config.sentinelApiKey, request);
     if (!scope) return reply.code(401).send({ error: "invalid_api_key" });
+    if (!(await enforceProjectRole(pool, request, reply, scope.projectId, "admin"))) return;
 
     const parsed = CreateApiKeySchema.safeParse(request.body);
     if (!parsed.success) {
@@ -156,6 +227,7 @@ export async function buildServer() {
   app.delete("/v1/api-keys/:id", async (request, reply) => {
     const scope = await getAnalyticsProjectScope(pool, config.sentinelApiKey, request);
     if (!scope) return reply.code(401).send({ error: "invalid_api_key" });
+    if (!(await enforceProjectRole(pool, request, reply, scope.projectId, "admin"))) return;
 
     const { id } = request.params as { id: string };
     const revoked = await revokeApiKey(pool, scope.projectId, id);
@@ -166,6 +238,7 @@ export async function buildServer() {
   app.patch("/v1/incidents/:id/status", async (request, reply) => {
     const scope = await getAnalyticsProjectScope(pool, config.sentinelApiKey, request);
     if (!scope) return reply.code(401).send({ error: "invalid_api_key" });
+    if (!(await enforceProjectRole(pool, request, reply, scope.projectId, "developer"))) return;
 
     const parsed = UpdateIncidentStatusSchema.safeParse(request.body);
     if (!parsed.success) {
@@ -203,6 +276,7 @@ export async function buildServer() {
   app.post("/v1/alert-destinations", async (request, reply) => {
     const scope = await getAnalyticsProjectScope(pool, config.sentinelApiKey, request);
     if (!scope) return reply.code(401).send({ error: "invalid_api_key" });
+    if (!(await enforceProjectRole(pool, request, reply, scope.projectId, "admin"))) return;
 
     const parsed = CreateAlertDestinationSchema.safeParse(request.body);
     if (!parsed.success) {
@@ -216,6 +290,7 @@ export async function buildServer() {
   app.patch("/v1/alert-destinations/:id", async (request, reply) => {
     const scope = await getAnalyticsProjectScope(pool, config.sentinelApiKey, request);
     if (!scope) return reply.code(401).send({ error: "invalid_api_key" });
+    if (!(await enforceProjectRole(pool, request, reply, scope.projectId, "admin"))) return;
 
     const parsed = UpdateAlertDestinationSchema.safeParse(request.body);
     if (!parsed.success) {
@@ -249,6 +324,7 @@ export async function buildServer() {
   app.post("/v1/alert-rules", async (request, reply) => {
     const scope = await getAnalyticsProjectScope(pool, config.sentinelApiKey, request);
     if (!scope) return reply.code(401).send({ error: "invalid_api_key" });
+    if (!(await enforceProjectRole(pool, request, reply, scope.projectId, "admin"))) return;
 
     const parsed = CreateAlertRuleSchema.safeParse(request.body);
     if (!parsed.success) {
@@ -268,6 +344,7 @@ export async function buildServer() {
   app.patch("/v1/alert-rules/:id", async (request, reply) => {
     const scope = await getAnalyticsProjectScope(pool, config.sentinelApiKey, request);
     if (!scope) return reply.code(401).send({ error: "invalid_api_key" });
+    if (!(await enforceProjectRole(pool, request, reply, scope.projectId, "admin"))) return;
 
     const parsed = UpdateAlertRuleSchema.safeParse(request.body);
     if (!parsed.success) {
@@ -288,6 +365,11 @@ export async function buildServer() {
 
   return { app, config };
 }
+
+const LoginSchema = z.object({
+  email: z.string().trim().email(),
+  password: z.string().min(1)
+});
 
 const CreateApiKeySchema = z.object({
   name: z.string().trim().min(2).max(80)
@@ -336,6 +418,40 @@ async function getAnalyticsProjectScope(
   const requestedProjectId = (request.query as { projectId?: string } | undefined)?.projectId;
   const apiKey = Array.isArray(apiKeyHeader) ? apiKeyHeader[0] : apiKeyHeader;
   return resolveProjectForApiKey(pool, apiKey, fallbackApiKey, requestedProjectId);
+}
+
+function getBearerToken(request: FastifyRequest): string | undefined {
+  const header = request.headers.authorization;
+  if (!header?.startsWith("Bearer ")) return undefined;
+  return header.slice("Bearer ".length);
+}
+
+// Role enforcement only applies when the caller presents a dashboard session token. A caller
+// authenticating with a project API key (SDKs, automation, the shared dev fallback) is a
+// coarser-grained trust tier than a human dashboard role and is unaffected by this check.
+async function enforceProjectRole(
+  pool: ReturnType<typeof createPool>,
+  request: FastifyRequest,
+  reply: import("fastify").FastifyReply,
+  projectId: string,
+  minimumRole: string
+): Promise<boolean> {
+  const token = getBearerToken(request);
+  if (!token) return true;
+
+  const session = await resolveSession(pool, token);
+  if (!session) {
+    reply.code(401).send({ error: "invalid_session" });
+    return false;
+  }
+
+  const role = await getProjectRole(pool, session.userId, projectId);
+  if (!roleMeetsMinimum(role, minimumRole)) {
+    reply.code(403).send({ error: "insufficient_role", required: minimumRole });
+    return false;
+  }
+
+  return true;
 }
 
 if (process.env.NODE_ENV !== "test") {

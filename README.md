@@ -14,8 +14,6 @@ Sentinel monitors REST, GraphQL, WebSocket, webhook, and EVM JSON-RPC traffic th
 
 ![Sentinel RPC activity](assets/screenshots/rpc-activity.png)
 
-![Sentinel alert workflows](assets/screenshots/alert-workflows.png)
-
 ## MVP Scope
 
 Sentinel v0 targets:
@@ -142,22 +140,31 @@ Operational endpoints:
 - `GET /health`: process liveness
 - `GET /ready`: database and queue readiness
 - `GET /metrics`: Prometheus-style Sentinel runtime metrics
+- `POST /v1/auth/login`: authenticate with email and password, returns a session token and real project roles
+- `GET /v1/auth/session`: validate a session token and return the current user, organization, and project roles
+- `POST /v1/auth/logout`: invalidate a session token
 - `GET /v1/analytics/system`: JSON system metrics for the dashboard
 - `GET /v1/analytics/requests`: recent request explorer data with method, status, IP, path, and threat filters
 - `GET /v1/api-keys`: list project-scoped SDK API keys
-- `POST /v1/api-keys`: create a new project-scoped SDK API key
-- `DELETE /v1/api-keys/:id`: revoke a project-scoped SDK API key
-- `PATCH /v1/incidents/:id/status`: update incident workflow status
+- `POST /v1/api-keys`: create a new project-scoped SDK API key (requires `admin` role when called with a session token)
+- `DELETE /v1/api-keys/:id`: revoke a project-scoped SDK API key (requires `admin` role when called with a session token)
+- `PATCH /v1/incidents/:id/status`: update incident workflow status (requires `developer` role when called with a session token)
 - `GET /v1/incidents/:id/timeline`: list status timeline entries
 - `GET /v1/alert-destinations`: list project webhook destinations
-- `POST /v1/alert-destinations`: create a project webhook destination
-- `PATCH /v1/alert-destinations/:id`: enable or disable a webhook destination
+- `POST /v1/alert-destinations`: create a project webhook destination (requires `admin` role when called with a session token)
+- `PATCH /v1/alert-destinations/:id`: enable or disable a webhook destination (requires `admin` role when called with a session token)
 - `GET /v1/alert-deliveries`: list queued alert delivery records
+- `GET /v1/alert-rules`: list project alert threshold rules
+- `POST /v1/alert-rules`: create an alert threshold rule (requires `admin` role when called with a session token)
+- `PATCH /v1/alert-rules/:id`: update or enable/disable an alert threshold rule (requires `admin` role when called with a session token)
+- `GET /v1/errors`: list grouped application errors by type, message, and endpoint
 
 Dashboard access:
 
-- The dashboard includes a local sign-in shell for the MVP operator experience.
-- Demo access uses `owner@sentinel.local` with any non-empty password while full password auth is being implemented.
+- The dashboard authenticates against real password-hashed accounts and issued sessions; sign-in is not simulated.
+- On first startup, the API bootstraps one owner-role account for the `demo` project using `SENTINEL_ADMIN_EMAIL` and `SENTINEL_ADMIN_PASSWORD` (defaults: `owner@sentinel.local` / `sentinel-demo`). Set both env vars before first boot to use your own credentials instead.
+- Passwords are hashed with scrypt; sessions are opaque bearer tokens, hashed at rest, valid for 7 days.
+- Roles (`owner`, `admin`, `developer`, `viewer`) are enforced server-side on mutating requests (API keys, alert destinations, alert rules, incident status) whenever a dashboard session is presented — not just hidden in the UI.
 - The signed-in shell shows the current organization, operator role, and selected project.
 - The project switcher scopes dashboard analytics requests and keeps offline demo data project-aware.
 - The API Keys view provides project key listing, one-time key reveal, revoke actions, and an SDK setup snippet.
@@ -226,6 +233,11 @@ npm test
 npm run lint
 npm run build
 ```
+
+## Architecture
+
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the full system design: data flow diagrams, the worker's
+processing pipeline, the data model, and the authentication/authorization trust boundaries.
 
 ## Roadmap
 

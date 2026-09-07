@@ -61,7 +61,36 @@ const dbMocks = vi.hoisted(() => ({
 	    enabled: false,
 	    created_at: new Date().toISOString()
 	  })),
-	  listErrorGroups: vi.fn(() => [])
+	  listErrorGroups: vi.fn(() => []),
+	  ensureBootstrapUser: vi.fn(),
+	  getUserByEmail: vi.fn((_pool: unknown, email: string) =>
+	    email === "owner@sentinel.local"
+	      ? {
+	          id: "user-1",
+	          email: "owner@sentinel.local",
+	          password_hash: "test-hash",
+	          organization_id: "org-1",
+	          organization_name: "Demo Organization"
+	        }
+	      : null
+	  ),
+	  createSession: vi.fn(() => ({ token: "sentinel_session_owner", expiresAt: new Date().toISOString() })),
+	  resolveSession: vi.fn((_pool: unknown, token?: string) => {
+	    if (token === "sentinel_session_owner") {
+	      return { userId: "user-1", email: "owner@sentinel.local", organizationId: "org-1", organizationName: "Demo Organization" };
+	    }
+	    if (token === "sentinel_session_viewer") {
+	      return { userId: "user-2", email: "viewer@sentinel.local", organizationId: "org-1", organizationName: "Demo Organization" };
+	    }
+	    return null;
+	  }),
+	  deleteSession: vi.fn(),
+	  listMembershipsForUser: vi.fn((_pool: unknown, userId: string) =>
+	    userId === "user-1"
+	      ? [{ project_id: "demo", role: "owner", name: "Demo Project" }]
+	      : [{ project_id: "demo", role: "viewer", name: "Demo Project" }]
+	  ),
+	  getProjectRole: vi.fn((_pool: unknown, userId: string) => (userId === "user-1" ? "owner" : "viewer"))
 	}));
 
 	vi.mock("./db.js", () => ({
@@ -70,22 +99,37 @@ const dbMocks = vi.hoisted(() => ({
 	  createAlertRule: dbMocks.createAlertRule,
 	  createApiKey: dbMocks.createApiKey,
 	  createPool: () => ({ end: vi.fn() }),
+	  createSession: dbMocks.createSession,
+	  deleteSession: dbMocks.deleteSession,
+	  ensureBootstrapUser: dbMocks.ensureBootstrapUser,
 	  getIncidentTimeline: dbMocks.getIncidentTimeline,
 	  getOverview: dbMocks.getOverview,
 	  getIncidents: () => [],
+	  getProjectRole: dbMocks.getProjectRole,
 	  getRequests: dbMocks.getRequests,
+	  getUserByEmail: dbMocks.getUserByEmail,
 	  listAlertDeliveries: dbMocks.listAlertDeliveries,
 	  listAlertDestinations: dbMocks.listAlertDestinations,
 	  listAlertRules: dbMocks.listAlertRules,
 	  listApiKeys: dbMocks.listApiKeys,
 	  listErrorGroups: dbMocks.listErrorGroups,
+	  listMembershipsForUser: dbMocks.listMembershipsForUser,
 	  revokeApiKey: dbMocks.revokeApiKey,
 	  resolveProjectForApiKey: (_pool: unknown, apiKey: string, _fallback: string, requestedProjectId?: string) =>
 	    apiKey === "dev-sentinel-key" ? { projectId: requestedProjectId ?? "demo", keyId: "test" } : null,
+	  resolveSession: dbMocks.resolveSession,
 	  updateAlertDestination: dbMocks.updateAlertDestination,
 	  updateAlertRule: dbMocks.updateAlertRule,
 	  updateIncidentStatus: dbMocks.updateIncidentStatus
 	}));
+
+vi.mock("./auth.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./auth.js")>();
+  return {
+    ...actual,
+    verifyPassword: vi.fn(async (password: string) => password === "correct-password")
+  };
+});
 
 vi.mock("./queue.js", () => ({
   createRedis: () => ({ quit: vi.fn(), pipeline: vi.fn() }),
@@ -359,6 +403,123 @@ describe("api server", () => {
 
 	    expect(response.statusCode).toBe(200);
 	    expect(dbMocks.listErrorGroups).toHaveBeenCalledWith(expect.anything(), "demo");
+	    await app.close();
+	  });
+
+	  it("logs in with the correct password and returns a session token with real project roles", async () => {
+	    const { app } = await buildServer();
+	    const response = await app.inject({
+	      method: "POST",
+	      url: "/v1/auth/login",
+	      payload: { email: "owner@sentinel.local", password: "correct-password" }
+	    });
+
+	    expect(response.statusCode).toBe(200);
+	    const body = response.json();
+	    expect(body.token).toBe("sentinel_session_owner");
+	    expect(body.projects).toEqual([{ id: "demo", name: "Demo Project", role: "owner" }]);
+	    await app.close();
+	  });
+
+	  it("rejects login with an incorrect password", async () => {
+	    const { app } = await buildServer();
+	    const response = await app.inject({
+	      method: "POST",
+	      url: "/v1/auth/login",
+	      payload: { email: "owner@sentinel.local", password: "wrong-password" }
+	    });
+
+	    expect(response.statusCode).toBe(401);
+	    await app.close();
+	  });
+
+	  it("rejects login for an unknown email", async () => {
+	    const { app } = await buildServer();
+	    const response = await app.inject({
+	      method: "POST",
+	      url: "/v1/auth/login",
+	      payload: { email: "nobody@sentinel.local", password: "correct-password" }
+	    });
+
+	    expect(response.statusCode).toBe(401);
+	    await app.close();
+	  });
+
+	  it("resolves a valid session token", async () => {
+	    const { app } = await buildServer();
+	    const response = await app.inject({
+	      method: "GET",
+	      url: "/v1/auth/session",
+	      headers: { authorization: "Bearer sentinel_session_owner" }
+	    });
+
+	    expect(response.statusCode).toBe(200);
+	    expect(response.json().user.email).toBe("owner@sentinel.local");
+	    await app.close();
+	  });
+
+	  it("rejects an invalid session token", async () => {
+	    const { app } = await buildServer();
+	    const response = await app.inject({
+	      method: "GET",
+	      url: "/v1/auth/session",
+	      headers: { authorization: "Bearer not-a-real-token" }
+	    });
+
+	    expect(response.statusCode).toBe(401);
+	    await app.close();
+	  });
+
+	  it("logs out by deleting the session", async () => {
+	    const { app } = await buildServer();
+	    const response = await app.inject({
+	      method: "POST",
+	      url: "/v1/auth/logout",
+	      headers: { authorization: "Bearer sentinel_session_owner" }
+	    });
+
+	    expect(response.statusCode).toBe(204);
+	    expect(dbMocks.deleteSession).toHaveBeenCalledWith(expect.anything(), "sentinel_session_owner");
+	    await app.close();
+	  });
+
+	  it("allows a mutating request from a session with a sufficient role", async () => {
+	    const { app } = await buildServer();
+	    const response = await app.inject({
+	      method: "POST",
+	      url: "/v1/api-keys",
+	      headers: { "x-sentinel-api-key": "dev-sentinel-key", authorization: "Bearer sentinel_session_owner" },
+	      payload: { name: "Production SDK" }
+	    });
+
+	    expect(response.statusCode).toBe(201);
+	    await app.close();
+	  });
+
+	  it("rejects a mutating request from a session with an insufficient role", async () => {
+	    const { app } = await buildServer();
+	    const response = await app.inject({
+	      method: "POST",
+	      url: "/v1/api-keys",
+	      headers: { "x-sentinel-api-key": "dev-sentinel-key", authorization: "Bearer sentinel_session_viewer" },
+	      payload: { name: "Production SDK" }
+	    });
+
+	    expect(response.statusCode).toBe(403);
+	    expect(dbMocks.createApiKey).not.toHaveBeenCalled();
+	    await app.close();
+	  });
+
+	  it("rejects a mutating request carrying an invalid session token even with a valid api key", async () => {
+	    const { app } = await buildServer();
+	    const response = await app.inject({
+	      method: "POST",
+	      url: "/v1/api-keys",
+	      headers: { "x-sentinel-api-key": "dev-sentinel-key", authorization: "Bearer not-a-real-token" },
+	      payload: { name: "Production SDK" }
+	    });
+
+	    expect(response.statusCode).toBe(401);
 	    await app.close();
 	  });
 	});

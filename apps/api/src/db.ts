@@ -1,11 +1,125 @@
 import pg from "pg";
 import { createHash, randomBytes } from "node:crypto";
+import { generateSessionToken, hashPassword, hashToken, SESSION_TTL_MS } from "./auth.js";
 import { ApiConfig } from "./config.js";
 
 const { Pool } = pg;
 
 export function createPool(config: ApiConfig) {
   return new Pool({ connectionString: config.databaseUrl });
+}
+
+export async function ensureBootstrapUser(
+  pool: pg.Pool,
+  projectId: string,
+  email: string,
+  password: string
+) {
+  const project = await pool.query(`select organization_id from projects where id = $1`, [projectId]);
+  const organizationId = project.rows[0]?.organization_id;
+  if (!organizationId) return;
+
+  const existing = await pool.query(`select id from users where email = $1`, [email]);
+  if (existing.rows[0]) return;
+
+  const passwordHash = await hashPassword(password);
+  const created = await pool.query(
+    `insert into users (organization_id, email, password_hash) values ($1, $2, $3) returning id`,
+    [organizationId, email, passwordHash]
+  );
+  const userId = created.rows[0].id as string;
+
+  await pool.query(
+    `
+    insert into project_memberships (project_id, user_id, role)
+    values ($1, $2, 'owner')
+    on conflict (project_id, user_id) do nothing
+    `,
+    [projectId, userId]
+  );
+}
+
+export async function getUserByEmail(pool: pg.Pool, email: string) {
+  const result = await pool.query(
+    `
+    select users.id, users.email, users.password_hash, users.organization_id,
+           organizations.name as organization_name
+    from users
+    join organizations on organizations.id = users.organization_id
+    where users.email = $1
+    `,
+    [email]
+  );
+
+  return result.rows[0] ?? null;
+}
+
+export async function createSession(pool: pg.Pool, userId: string) {
+  const token = generateSessionToken();
+  const expiresAt = new Date(Date.now() + SESSION_TTL_MS).toISOString();
+
+  await pool.query(`insert into sessions (user_id, token_hash, expires_at) values ($1, $2, $3)`, [
+    userId,
+    hashToken(token),
+    expiresAt
+  ]);
+
+  return { token, expiresAt };
+}
+
+export async function resolveSession(pool: pg.Pool, token: string | undefined) {
+  if (!token) return null;
+
+  const result = await pool.query(
+    `
+    select sessions.user_id, sessions.expires_at, users.email, users.organization_id,
+           organizations.name as organization_name
+    from sessions
+    join users on users.id = sessions.user_id
+    join organizations on organizations.id = users.organization_id
+    where sessions.token_hash = $1
+    `,
+    [hashToken(token)]
+  );
+
+  const row = result.rows[0];
+  if (!row) return null;
+  if (new Date(row.expires_at).getTime() < Date.now()) return null;
+
+  return {
+    userId: row.user_id as string,
+    email: row.email as string,
+    organizationId: row.organization_id as string,
+    organizationName: row.organization_name as string
+  };
+}
+
+export async function deleteSession(pool: pg.Pool, token: string) {
+  await pool.query(`delete from sessions where token_hash = $1`, [hashToken(token)]);
+}
+
+export async function listMembershipsForUser(pool: pg.Pool, userId: string) {
+  const result = await pool.query(
+    `
+    select project_memberships.project_id, project_memberships.role, projects.name
+    from project_memberships
+    join projects on projects.id = project_memberships.project_id
+    where project_memberships.user_id = $1
+    order by projects.name
+    `,
+    [userId]
+  );
+
+  return result.rows;
+}
+
+export async function getProjectRole(pool: pg.Pool, userId: string, projectId: string) {
+  const result = await pool.query(
+    `select role from project_memberships where user_id = $1 and project_id = $2`,
+    [userId, projectId]
+  );
+
+  return (result.rows[0]?.role as string | undefined) ?? null;
 }
 
 export async function getOverview(pool: pg.Pool, projectId = "demo") {
