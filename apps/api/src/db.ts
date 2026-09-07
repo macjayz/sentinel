@@ -19,13 +19,14 @@ export async function ensureBootstrapUser(
   const organizationId = project.rows[0]?.organization_id;
   if (!organizationId) return;
 
-  const existing = await pool.query(`select id from users where email = $1`, [email]);
+  const normalizedEmail = normalizeEmail(email);
+  const existing = await pool.query(`select id from users where lower(email) = $1`, [normalizedEmail]);
   if (existing.rows[0]) return;
 
   const passwordHash = await hashPassword(password);
   const created = await pool.query(
     `insert into users (organization_id, email, password_hash) values ($1, $2, $3) returning id`,
-    [organizationId, email, passwordHash]
+    [organizationId, normalizedEmail, passwordHash]
   );
   const userId = created.rows[0].id as string;
 
@@ -46,12 +47,86 @@ export async function getUserByEmail(pool: pg.Pool, email: string) {
            organizations.name as organization_name
     from users
     join organizations on organizations.id = users.organization_id
-    where users.email = $1
+    where lower(users.email) = $1
     `,
-    [email]
+    [normalizeEmail(email)]
   );
 
   return result.rows[0] ?? null;
+}
+
+export async function createWorkspaceOwner(
+  pool: pg.Pool,
+  input: {
+    email: string;
+    password: string;
+    organizationName: string;
+    projectName: string;
+  }
+) {
+  const client = await pool.connect();
+  const email = normalizeEmail(input.email);
+  const projectId = makeProjectId(input.projectName);
+  const passwordHash = await hashPassword(input.password);
+  const key = `sentinel_${randomBytes(24).toString("base64url")}`;
+  const prefix = key.slice(0, 17);
+
+  try {
+    await client.query("begin");
+
+    const existing = await client.query(`select id from users where lower(email) = $1`, [email]);
+    if (existing.rows[0]) {
+      await client.query("rollback");
+      return { kind: "email_exists" as const };
+    }
+
+    const organization = await client.query(
+      `insert into organizations (name) values ($1) returning id, name`,
+      [input.organizationName.trim()]
+    );
+    const organizationRow = organization.rows[0];
+
+    const user = await client.query(
+      `insert into users (organization_id, email, password_hash) values ($1, $2, $3) returning id, email`,
+      [organizationRow.id, email, passwordHash]
+    );
+    const userRow = user.rows[0];
+
+    const project = await client.query(
+      `insert into projects (id, organization_id, name) values ($1, $2, $3) returning id, name`,
+      [projectId, organizationRow.id, input.projectName.trim()]
+    );
+    const projectRow = project.rows[0];
+
+    await client.query(`insert into project_memberships (project_id, user_id, role) values ($1, $2, 'owner')`, [
+      projectRow.id,
+      userRow.id
+    ]);
+
+    const apiKey = await client.query(
+      `
+      insert into api_keys (project_id, name, key_hash, prefix)
+      values ($1, 'Default SDK key', $2, $3)
+      returning id, name, prefix, last_used_at, created_at, revoked_at
+      `,
+      [projectRow.id, hashApiKey(key), prefix]
+    );
+
+    await client.query("commit");
+
+    return {
+      kind: "created" as const,
+      user: { id: userRow.id as string, email: userRow.email as string },
+      organization: { id: organizationRow.id as string, name: organizationRow.name as string },
+      project: { id: projectRow.id as string, name: projectRow.name as string, role: "owner" as const },
+      apiKey: { ...apiKey.rows[0], key }
+    };
+  } catch (error) {
+    await client.query("rollback");
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 export async function createSession(pool: pg.Pool, userId: string) {
@@ -473,9 +548,10 @@ export async function resolveProjectForApiKey(
   pool: pg.Pool,
   apiKey: string,
   fallbackApiKey: string,
-  requestedProjectId?: string
+  requestedProjectId?: string,
+  allowFallbackApiKey = false
 ) {
-  if (apiKey === fallbackApiKey) {
+  if (allowFallbackApiKey && apiKey === fallbackApiKey) {
     return { projectId: requestedProjectId ?? "demo", keyId: "env-fallback" };
   }
 
@@ -496,6 +572,21 @@ export async function resolveProjectForApiKey(
 
 export function hashApiKey(apiKey: string) {
   return createHash("sha256").update(apiKey).digest("hex");
+}
+
+function normalizeEmail(email: string) {
+  return email.trim().toLowerCase();
+}
+
+function makeProjectId(name: string) {
+  const slug = name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 36);
+
+  return `${slug || "project"}-${randomBytes(4).toString("hex")}`;
 }
 
 export async function listApiKeys(pool: pg.Pool, projectId: string) {

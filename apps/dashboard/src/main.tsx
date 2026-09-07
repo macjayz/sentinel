@@ -197,7 +197,7 @@ type AuthSession = {
 };
 
 const apiBase = import.meta.env.VITE_SENTINEL_API_URL ?? "http://localhost:8080";
-const dashboardApiKey = import.meta.env.VITE_SENTINEL_API_KEY ?? "dev-sentinel-key";
+const demoMode = import.meta.env.VITE_SENTINEL_DEMO_MODE === "true";
 
 // Kept in sync with the `sessionToken` state via an effect below. apiFetch is a standalone
 // function (not a hook), so it reads the current token from here rather than from props.
@@ -215,7 +215,15 @@ function App() {
   const [selectedProjectId, setSelectedProjectId] = useState(
     () => window.localStorage.getItem("sentinel.dashboard.project") ?? "demo"
   );
+  const [authMode, setAuthMode] = useState<"signin" | "signup">("signin");
   const [authForm, setAuthForm] = useState({ email: "owner@sentinel.local", password: "" });
+  const [signupForm, setSignupForm] = useState({
+    email: "",
+    password: "",
+    organizationName: "",
+    projectName: ""
+  });
+  const [onboardingKey, setOnboardingKey] = useState<ApiKeyRecord | null>(null);
   const [authError, setAuthError] = useState<string | null>(null);
   const [authSubmitting, setAuthSubmitting] = useState(false);
   const [overview, setOverview] = useState<Overview | null>(null);
@@ -297,9 +305,43 @@ function App() {
       currentSessionToken = data.token;
       setSessionToken(data.token);
       setSession({ user: data.user, organization: data.organization, projects: data.projects });
-      setSelectedProjectId((current) =>
-        data.projects.some((project) => project.id === current) ? current : (data.projects[0]?.id ?? "demo")
-      );
+      const projectId = data.projects.some((project) => project.id === selectedProjectId)
+        ? selectedProjectId
+        : (data.projects[0]?.id ?? "demo");
+      window.localStorage.setItem("sentinel.dashboard.project", projectId);
+      setSelectedProjectId(projectId);
+    } catch {
+      setAuthError("Could not reach the Sentinel API. Confirm the API is running and reachable.");
+    } finally {
+      setAuthSubmitting(false);
+    }
+  }
+
+  async function signupForDashboard() {
+    setAuthError(null);
+    setAuthSubmitting(true);
+    try {
+      const response = await fetch(new URL("/v1/auth/signup", apiBase), {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(signupForm)
+      });
+
+      if (!response.ok) {
+        setAuthError(await readErrorMessage(response));
+        return;
+      }
+
+      const data = (await response.json()) as AuthSession & { token: string; apiKey: ApiKeyRecord };
+      const projectId = data.projects[0]?.id ?? "demo";
+      window.localStorage.setItem("sentinel.dashboard.token", data.token);
+      window.localStorage.setItem("sentinel.dashboard.project", projectId);
+      currentSessionToken = data.token;
+      setSessionToken(data.token);
+      setSession({ user: data.user, organization: data.organization, projects: data.projects });
+      setSelectedProjectId(projectId);
+      setOnboardingKey(data.apiKey);
+      setNewKeySecret(data.apiKey.key ?? "");
     } catch {
       setAuthError("Could not reach the Sentinel API. Confirm the API is running and reachable.");
     } finally {
@@ -378,6 +420,11 @@ function App() {
         setErrorGroups(await errorGroupsResponse.json());
         await loadRequests();
       } catch {
+        if (!demoMode) {
+          setActionError("Could not load project telemetry from the Sentinel API.");
+          return;
+        }
+
         const demoData = getDemoProjectData(selectedProjectId);
         setOverview(demoData.overview);
         setIncidents(demoData.incidents);
@@ -406,10 +453,14 @@ function App() {
       })
     );
 
-    if (outcome.kind === "unreachable") {
+    if (outcome.kind === "unreachable" && demoMode) {
       const key = createDemoApiKey(newKeyName);
       setApiKeys((current) => [key, ...current]);
       setNewKeySecret(key.key ?? "");
+      return;
+    }
+    if (outcome.kind === "unreachable") {
+      setActionError("Could not reach the Sentinel API.");
       return;
     }
     if (outcome.kind === "rejected") {
@@ -431,7 +482,12 @@ function App() {
       return;
     }
 
-    // A network-unreachable API still applies the change locally so offline demo mode stays usable.
+    if (outcome.kind === "unreachable" && !demoMode) {
+      setActionError("Could not reach the Sentinel API.");
+      return;
+    }
+
+    // Demo mode applies the change locally so offline demos stay usable.
     setApiKeys((current) =>
       current.map((key) => (key.id === keyId ? { ...key, revoked_at: new Date().toISOString() } : key))
     );
@@ -450,12 +506,16 @@ function App() {
       setActionError(outcome.message);
       return;
     }
-    if (outcome.kind === "unreachable") {
+    if (outcome.kind === "unreachable" && demoMode) {
       setIncidents((current) =>
         current.map((entry) =>
           entry.id === incidentId ? { ...entry, status, updated_at: new Date().toISOString() } : entry
         )
       );
+      return;
+    }
+    if (outcome.kind === "unreachable") {
+      setActionError("Could not reach the Sentinel API.");
       return;
     }
 
@@ -472,8 +532,12 @@ function App() {
       })
     );
 
-    if (outcome.kind === "unreachable") {
+    if (outcome.kind === "unreachable" && demoMode) {
       setAlertDestinations((current) => [createDemoAlertDestination(newDestination), ...current]);
+      return;
+    }
+    if (outcome.kind === "unreachable") {
+      setActionError("Could not reach the Sentinel API.");
       return;
     }
     if (outcome.kind === "rejected") {
@@ -498,12 +562,16 @@ function App() {
       setActionError(outcome.message);
       return;
     }
-    if (outcome.kind === "unreachable") {
+    if (outcome.kind === "unreachable" && demoMode) {
       setAlertDestinations((current) =>
         current.map((entry) =>
           entry.id === destinationId ? { ...entry, enabled, updated_at: new Date().toISOString() } : entry
         )
       );
+      return;
+    }
+    if (outcome.kind === "unreachable") {
+      setActionError("Could not reach the Sentinel API.");
       return;
     }
 
@@ -522,7 +590,7 @@ function App() {
       })
     );
 
-    if (outcome.kind === "unreachable") {
+    if (outcome.kind === "unreachable" && demoMode) {
       setAlertRules((current) => [
         {
           id: `demo-rule-${Date.now()}`,
@@ -534,6 +602,10 @@ function App() {
         },
         ...current
       ]);
+      return;
+    }
+    if (outcome.kind === "unreachable") {
+      setActionError("Could not reach the Sentinel API.");
       return;
     }
     if (outcome.kind === "rejected") {
@@ -558,10 +630,14 @@ function App() {
       setActionError(outcome.message);
       return;
     }
-    if (outcome.kind === "unreachable") {
+    if (outcome.kind === "unreachable" && demoMode) {
       setAlertRules((current) =>
         current.map((entry) => (entry.id === ruleId ? { ...entry, enabled, updated_at: new Date().toISOString() } : entry))
       );
+      return;
+    }
+    if (outcome.kind === "unreachable") {
+      setActionError("Could not reach the Sentinel API.");
       return;
     }
 
@@ -587,7 +663,9 @@ function App() {
   useEffect(() => {
     if (!session) return;
 
-    const liveUrl = apiBase.replace(/^http/, "ws") + "/live";
+    const liveUrl = new URL("/live", apiBase.replace(/^http/, "ws"));
+    liveUrl.searchParams.set("projectId", selectedProjectId);
+    if (sessionToken) liveUrl.searchParams.set("token", sessionToken);
     const socket = new WebSocket(liveUrl);
 
     socket.addEventListener("open", () => setLiveStatus("Live"));
@@ -595,7 +673,7 @@ function App() {
     socket.addEventListener("message", () => setLiveStatus("Event received"));
 
     return () => socket.close();
-  }, [session]);
+  }, [selectedProjectId, session, sessionToken]);
 
   const maxThreatScore = useMemo(() => {
     const endpointScores = overview?.endpoints.map((endpoint) => endpoint.max_threat_score) ?? [];
@@ -615,9 +693,14 @@ function App() {
   if (!session) {
     return (
       <AuthScreen
+        mode={authMode}
         form={authForm}
+        signupForm={signupForm}
+        onModeChange={setAuthMode}
         onChange={setAuthForm}
+        onSignupChange={setSignupForm}
         onSubmit={() => void loginToDashboard()}
+        onSignup={() => void signupForDashboard()}
         error={authError}
         submitting={authSubmitting}
       />
@@ -710,6 +793,17 @@ function App() {
             <XCircle size={16} />
             <span>{actionError}</span>
             <button className="dismiss-button" onClick={() => setActionError(null)} title="Dismiss">
+              Dismiss
+            </button>
+          </div>
+        )}
+
+        {onboardingKey?.key && (
+          <div className="action-success" role="status">
+            <KeyRound size={16} />
+            <span>Your first SDK key is ready. Copy it now; Sentinel will not show the secret again.</span>
+            <code>{onboardingKey.key}</code>
+            <button className="dismiss-button" onClick={() => setOnboardingKey(null)} title="Dismiss">
               Dismiss
             </button>
           </div>
@@ -820,9 +914,13 @@ function App() {
             requests={requests}
             onChange={setRequestFilters}
             onRefresh={() =>
-              void loadRequests().catch(() =>
-                setRequests(filterDemoRequests(getDemoProjectData(selectedProjectId).requests, requestFilters))
-              )
+              void loadRequests().catch(() => {
+                if (demoMode) {
+                  setRequests(filterDemoRequests(getDemoProjectData(selectedProjectId).requests, requestFilters));
+                  return;
+                }
+                setActionError("Could not refresh requests from the Sentinel API.");
+              })
             }
           />
         )}
@@ -880,13 +978,26 @@ function App() {
 }
 
 function AuthScreen(props: {
+  mode: "signin" | "signup";
   form: { email: string; password: string };
+  signupForm: { email: string; password: string; organizationName: string; projectName: string };
+  onModeChange: (mode: "signin" | "signup") => void;
   onChange: (form: { email: string; password: string }) => void;
+  onSignupChange: (form: { email: string; password: string; organizationName: string; projectName: string }) => void;
   onSubmit: () => void;
+  onSignup: () => void;
   error: string | null;
   submitting: boolean;
 }) {
-  const canSubmit = props.form.email.length > 0 && props.form.password.length > 0 && !props.submitting;
+  const isSignup = props.mode === "signup";
+  const activeForm = isSignup ? props.signupForm : props.form;
+  const canSubmit =
+    activeForm.email.length > 0 &&
+    activeForm.password.length > 0 &&
+    (!isSignup || (props.signupForm.organizationName.length > 0 && props.signupForm.projectName.length > 0)) &&
+    !props.submitting;
+  const title = isSignup ? "Create your Sentinel account" : "Sign in to Sentinel";
+  const submitLabel = isSignup ? "Create account" : "Sign in";
 
   return (
     <main className="auth-shell">
@@ -899,14 +1010,33 @@ function AuthScreen(props: {
           </div>
         </div>
         <div>
-          <h1>Sign in to Sentinel</h1>
-          <p>Access the operator dashboard with project-scoped telemetry and incidents.</p>
+          <h1>{title}</h1>
+          <p>Access project-scoped API telemetry, incidents, keys, and alerts.</p>
+        </div>
+        <div className="auth-tabs" role="tablist" aria-label="Authentication mode">
+          <button
+            className={props.mode === "signin" ? "active" : ""}
+            type="button"
+            onClick={() => props.onModeChange("signin")}
+          >
+            Sign in
+          </button>
+          <button
+            className={props.mode === "signup" ? "active" : ""}
+            type="button"
+            onClick={() => props.onModeChange("signup")}
+          >
+            Create account
+          </button>
         </div>
         <form
           className="auth-form"
           onSubmit={(event) => {
             event.preventDefault();
-            if (canSubmit) props.onSubmit();
+            if (canSubmit) {
+              if (isSignup) props.onSignup();
+              else props.onSubmit();
+            }
           }}
         >
           {props.error && (
@@ -918,8 +1048,11 @@ function AuthScreen(props: {
             Email
             <input
               type="email"
-              value={props.form.email}
-              onChange={(event) => props.onChange({ ...props.form, email: event.target.value })}
+              value={activeForm.email}
+              onChange={(event) => {
+                if (isSignup) props.onSignupChange({ ...props.signupForm, email: event.target.value });
+                else props.onChange({ ...props.form, email: event.target.value });
+              }}
               placeholder="owner@sentinel.local"
             />
           </label>
@@ -927,14 +1060,39 @@ function AuthScreen(props: {
             Password
             <input
               type="password"
-              value={props.form.password}
-              onChange={(event) => props.onChange({ ...props.form, password: event.target.value })}
+              value={activeForm.password}
+              onChange={(event) => {
+                if (isSignup) props.onSignupChange({ ...props.signupForm, password: event.target.value });
+                else props.onChange({ ...props.form, password: event.target.value });
+              }}
               placeholder="Enter your password"
             />
           </label>
+          {isSignup && (
+            <>
+              <label>
+                Organization
+                <input
+                  type="text"
+                  value={props.signupForm.organizationName}
+                  onChange={(event) => props.onSignupChange({ ...props.signupForm, organizationName: event.target.value })}
+                  placeholder="Acme Security"
+                />
+              </label>
+              <label>
+                Project
+                <input
+                  type="text"
+                  value={props.signupForm.projectName}
+                  onChange={(event) => props.onSignupChange({ ...props.signupForm, projectName: event.target.value })}
+                  placeholder="Production API"
+                />
+              </label>
+            </>
+          )}
           <button disabled={!canSubmit}>
-            <KeyRound size={16} />
-            {props.submitting ? "Signing in..." : "Sign in"}
+            {isSignup ? <Plus size={16} /> : <KeyRound size={16} />}
+            {props.submitting ? "Working..." : submitLabel}
           </button>
         </form>
       </section>
@@ -944,8 +1102,12 @@ function AuthScreen(props: {
           <Building2 size={18} />
         </span>
         <div>
-          <strong>Demo Organization</strong>
-          <p>Owner role, project memberships, and API key scoping are represented in the dashboard shell.</p>
+          <strong>{isSignup ? "Isolated workspace" : "Project isolation"}</strong>
+          <p>
+            {isSignup
+              ? "A new organization, project, owner role, and first SDK key are created for your account."
+              : "Users only see projects where they have an explicit membership and role."}
+          </p>
         </div>
       </aside>
     </main>
@@ -1749,7 +1911,6 @@ async function apiFetch(path: string, projectId: string, init: RequestInit = {})
     ...init,
     headers: {
       ...(init.body ? { "content-type": "application/json" } : {}),
-      ...(dashboardApiKey ? { "x-sentinel-api-key": dashboardApiKey } : {}),
       ...(currentSessionToken ? { authorization: `Bearer ${currentSessionToken}` } : {}),
       ...init.headers
     }

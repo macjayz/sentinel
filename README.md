@@ -140,6 +140,7 @@ Operational endpoints:
 - `GET /health`: process liveness
 - `GET /ready`: database and queue readiness
 - `GET /metrics`: Prometheus-style Sentinel runtime metrics
+- `POST /v1/auth/signup`: create an organization, first project, owner user, and initial SDK API key
 - `POST /v1/auth/login`: authenticate with email and password, returns a session token and real project roles
 - `GET /v1/auth/session`: validate a session token and return the current user, organization, and project roles
 - `POST /v1/auth/logout`: invalidate a session token
@@ -162,14 +163,23 @@ Operational endpoints:
 Dashboard access:
 
 - The dashboard authenticates against real password-hashed accounts and issued sessions; sign-in is not simulated.
-- On first startup, the API bootstraps one owner-role account for the `demo` project using `SENTINEL_ADMIN_EMAIL` and `SENTINEL_ADMIN_PASSWORD` (defaults: `owner@sentinel.local` / `sentinel-demo`). Set both env vars before first boot to use your own credentials instead.
+- Public signup creates an isolated organization, first project, owner-role membership, and one-time initial SDK API key for the new account.
+- In non-production environments, the API bootstraps one owner-role account for the `demo` project using `SENTINEL_ADMIN_EMAIL` and `SENTINEL_ADMIN_PASSWORD` (defaults: `owner@sentinel.local` / `sentinel-demo`). In production, set `SENTINEL_BOOTSTRAP_DEMO_USER=true` only when you intentionally want that demo account.
 - Passwords are hashed with scrypt; sessions are opaque bearer tokens, hashed at rest, valid for 7 days.
-- Roles (`owner`, `admin`, `developer`, `viewer`) are enforced server-side on mutating requests (API keys, alert destinations, alert rules, incident status) whenever a dashboard session is presented — not just hidden in the UI.
+- Roles (`owner`, `admin`, `developer`, `viewer`) are enforced server-side on dashboard mutating requests (API keys, alert destinations, alert rules, incident status) — not just hidden in the UI.
 - The signed-in shell shows the current organization, operator role, and selected project.
-- The project switcher scopes dashboard analytics requests and keeps offline demo data project-aware.
+- The project switcher scopes dashboard analytics requests to projects where the signed-in user has membership.
 - The API Keys view provides project key listing, one-time key reveal, revoke actions, and an SDK setup snippet.
 - The Incidents view supports status filters and open, acknowledged, resolved, and ignored workflows.
 - The Alerts view manages webhook destinations and shows queued high-severity incident deliveries.
+- Live dashboard updates require a valid session token and project membership.
+
+Production mode:
+
+- Set `NODE_ENV=production` for public deployments.
+- Production mode disables the shared development fallback key unless `SENTINEL_ALLOW_DEV_FALLBACK_KEY=true` is explicitly set.
+- Dashboard API calls use session bearer tokens, not a shared browser-exposed API key.
+- Use `VITE_SENTINEL_DEMO_MODE=true` only for a separate demo build where local fallback data is acceptable.
 
 Web3 RPC:
 
@@ -184,7 +194,8 @@ Multi-tenancy:
 - Projects belong to organizations.
 - API keys are scoped to projects.
 - Ingestion rejects events whose `projectId` does not match the API key scope.
-- Analytics queries default to the demo project and are structured to filter by `project_id`.
+- Dashboard analytics require a valid session and project membership; SDK/API access requires a valid project-scoped API key.
+- All persisted telemetry, incidents, alert rules, delivery records, and error groups are filtered by `project_id`.
 
 Tracing:
 

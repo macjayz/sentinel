@@ -51,6 +51,34 @@ body {
   gap: 14px;
 }
 
+.auth-tabs {
+  background: #eef2f6;
+  border: 1px solid #d9e0e7;
+  border-radius: 8px;
+  display: grid;
+  gap: 4px;
+  grid-template-columns: 1fr 1fr;
+  padding: 4px;
+}
+
+.auth-tabs button {
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: #536273;
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  height: 34px;
+}
+
+.auth-tabs button.active {
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgba(16, 24, 32, 0.08);
+  color: #101820;
+}
+
 .auth-error {
   background: #ffe5e5;
   border-radius: 8px;
@@ -464,20 +492,41 @@ th {
   width: 42px;
 }
 
-.action-error {
+.action-error,
+.action-success {
   align-items: center;
-  background: #ffe5e5;
   border-radius: 8px;
-  color: #a51d1d;
   display: flex;
   gap: 10px;
   margin-bottom: 18px;
   padding: 10px 14px;
 }
 
-.action-error span {
+.action-error {
+  background: #ffe5e5;
+  color: #a51d1d;
+}
+
+.action-success {
+  background: #ecfdf5;
+  border: 1px solid #b7ebd1;
+  color: #17633f;
+  flex-wrap: wrap;
+}
+
+.action-error span,
+.action-success span {
   flex: 1;
   font-weight: 600;
+}
+
+.action-success code {
+  background: #ffffff;
+  border: 1px solid #b7ebd1;
+  border-radius: 6px;
+  color: #101820;
+  font-size: 12px;
+  padding: 6px 8px;
 }
 
 .dismiss-button {

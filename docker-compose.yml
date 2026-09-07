@@ -37,6 +37,8 @@ services:
       DATABASE_URL: postgres://sentinel:sentinel@postgres:5432/sentinel
       REDIS_URL: redis://redis:6379
       SENTINEL_API_KEY: dev-sentinel-key
+      SENTINEL_ALLOW_DEV_FALLBACK_KEY: "true"
+      SENTINEL_BOOTSTRAP_DEMO_USER: "true"
     ports:
       - "8080:8080"
     depends_on:
@@ -66,7 +68,6 @@ services:
       dockerfile: infra/dashboard.Dockerfile
     environment:
       VITE_SENTINEL_API_URL: http://localhost:8080
-      VITE_SENTINEL_API_KEY: dev-sentinel-key
     ports:
       - "5173:5173"
     depends_on:

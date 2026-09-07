@@ -18,6 +18,21 @@ const dbMocks = vi.hoisted(() => ({
     revoked_at: null,
     last_used_at: null
 	  })),
+	  createWorkspaceOwner: vi.fn(() => ({
+	    kind: "created",
+	    user: { id: "user-3", email: "new@sentinel.local" },
+	    organization: { id: "org-2", name: "New Org" },
+	    project: { id: "new-api-1234abcd", name: "New API", role: "owner" },
+	    apiKey: {
+	      id: "key-2",
+	      name: "Default SDK key",
+	      prefix: "sentinel_new",
+	      key: "sentinel_new_secret",
+	      created_at: new Date().toISOString(),
+	      revoked_at: null,
+	      last_used_at: null
+	    }
+	  })),
 	  revokeApiKey: vi.fn(() => true),
 	  updateIncidentStatus: vi.fn(() => ({
 	    id: "incident-1",
@@ -100,6 +115,7 @@ const dbMocks = vi.hoisted(() => ({
 	  createApiKey: dbMocks.createApiKey,
 	  createPool: () => ({ end: vi.fn() }),
 	  createSession: dbMocks.createSession,
+	  createWorkspaceOwner: dbMocks.createWorkspaceOwner,
 	  deleteSession: dbMocks.deleteSession,
 	  ensureBootstrapUser: dbMocks.ensureBootstrapUser,
 	  getIncidentTimeline: dbMocks.getIncidentTimeline,
@@ -115,8 +131,13 @@ const dbMocks = vi.hoisted(() => ({
 	  listErrorGroups: dbMocks.listErrorGroups,
 	  listMembershipsForUser: dbMocks.listMembershipsForUser,
 	  revokeApiKey: dbMocks.revokeApiKey,
-	  resolveProjectForApiKey: (_pool: unknown, apiKey: string, _fallback: string, requestedProjectId?: string) =>
-	    apiKey === "dev-sentinel-key" ? { projectId: requestedProjectId ?? "demo", keyId: "test" } : null,
+	  resolveProjectForApiKey: (
+	    _pool: unknown,
+	    apiKey: string,
+	    _fallback: string,
+	    requestedProjectId?: string,
+	    allowFallbackApiKey?: boolean
+	  ) => (apiKey === "dev-sentinel-key" && allowFallbackApiKey ? { projectId: requestedProjectId ?? "demo", keyId: "test" } : null),
 	  resolveSession: dbMocks.resolveSession,
 	  updateAlertDestination: dbMocks.updateAlertDestination,
 	  updateAlertRule: dbMocks.updateAlertRule,
@@ -201,16 +222,16 @@ describe("api server", () => {
     await app.close();
   });
 
-  it("keeps anonymous analytics scoped to the demo project", async () => {
+  it("rejects anonymous analytics requests", async () => {
     const { app } = await buildServer();
     const response = await app.inject({
       method: "GET",
       url: "/v1/analytics/requests?projectId=other&limit=10"
     });
 
-    expect(response.statusCode).toBe(200);
-    expect(response.json()).toEqual([]);
-    expect(dbMocks.getRequests).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ projectId: "demo" }));
+    expect(response.statusCode).toBe(401);
+    expect(response.json().error).toBe("authentication_required");
+    expect(dbMocks.getRequests).not.toHaveBeenCalled();
     await app.close();
   });
 
@@ -219,7 +240,7 @@ describe("api server", () => {
     const response = await app.inject({
       method: "GET",
       url: "/v1/analytics/requests?kind=evm_rpc&limit=10",
-      headers: { "x-sentinel-api-key": "dev-sentinel-key" }
+      headers: { authorization: "Bearer sentinel_session_owner" }
     });
 
     expect(response.statusCode).toBe(200);
@@ -230,25 +251,25 @@ describe("api server", () => {
     await app.close();
   });
 
-  it("scopes authenticated analytics to the requested project id", async () => {
+  it("scopes session analytics to a project membership", async () => {
     const { app } = await buildServer();
     const response = await app.inject({
       method: "GET",
-      url: "/v1/analytics/overview?projectId=checkout",
-      headers: { "x-sentinel-api-key": "dev-sentinel-key" }
+      url: "/v1/analytics/overview?projectId=demo",
+      headers: { authorization: "Bearer sentinel_session_owner" }
     });
 
     expect(response.statusCode).toBe(200);
-    expect(dbMocks.getOverview).toHaveBeenCalledWith(expect.anything(), "checkout");
+    expect(dbMocks.getOverview).toHaveBeenCalledWith(expect.anything(), "demo");
     await app.close();
   });
 
-  it("defaults authenticated analytics to the demo project without a projectId", async () => {
+  it("defaults session analytics to the first membership without a project id", async () => {
     const { app } = await buildServer();
     const response = await app.inject({
       method: "GET",
       url: "/v1/analytics/overview",
-      headers: { "x-sentinel-api-key": "dev-sentinel-key" }
+      headers: { authorization: "Bearer sentinel_session_owner" }
     });
 
     expect(response.statusCode).toBe(200);
@@ -268,12 +289,51 @@ describe("api server", () => {
     await app.close();
   });
 
+  it("rejects session analytics outside the user's project memberships", async () => {
+    const { app } = await buildServer();
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/analytics/overview?projectId=other",
+      headers: { authorization: "Bearer sentinel_session_owner" }
+    });
+
+    expect(response.statusCode).toBe(403);
+    expect(response.json().error).toBe("project_access_denied");
+    expect(dbMocks.getOverview).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it("creates a new isolated workspace on signup", async () => {
+    const { app } = await buildServer();
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/auth/signup",
+      payload: {
+        email: "New@Sentinel.local",
+        password: "correct-password",
+        organizationName: "New Org",
+        projectName: "New API"
+      }
+    });
+
+    expect(response.statusCode).toBe(201);
+    expect(dbMocks.createWorkspaceOwner).toHaveBeenCalledWith(expect.anything(), {
+      email: "new@sentinel.local",
+      password: "correct-password",
+      organizationName: "New Org",
+      projectName: "New API"
+    });
+    expect(response.json().projects).toEqual([{ id: "new-api-1234abcd", name: "New API", role: "owner" }]);
+    expect(response.json().apiKey.key).toBe("sentinel_new_secret");
+    await app.close();
+  });
+
   it("creates project-scoped api keys", async () => {
     const { app } = await buildServer();
     const response = await app.inject({
       method: "POST",
       url: "/v1/api-keys",
-      headers: { "x-sentinel-api-key": "dev-sentinel-key" },
+      headers: { authorization: "Bearer sentinel_session_owner" },
       payload: { name: "Production SDK" }
     });
 
@@ -288,7 +348,7 @@ describe("api server", () => {
     const response = await app.inject({
       method: "DELETE",
       url: "/v1/api-keys/key-1",
-      headers: { "x-sentinel-api-key": "dev-sentinel-key" }
+      headers: { authorization: "Bearer sentinel_session_owner" }
     });
 
     expect(response.statusCode).toBe(204);
@@ -301,7 +361,7 @@ describe("api server", () => {
 	    const response = await app.inject({
 	      method: "PATCH",
 	      url: "/v1/incidents/incident-1/status",
-	      headers: { "x-sentinel-api-key": "dev-sentinel-key" },
+	      headers: { authorization: "Bearer sentinel_session_owner" },
 	      payload: { status: "acknowledged" }
 	    });
 
@@ -322,7 +382,7 @@ describe("api server", () => {
 	    const response = await app.inject({
 	      method: "POST",
 	      url: "/v1/alert-destinations",
-	      headers: { "x-sentinel-api-key": "dev-sentinel-key" },
+	      headers: { authorization: "Bearer sentinel_session_owner" },
 	      payload: { name: "Security Operations", url: "https://alerts.example.com/sentinel" }
 	    });
 
@@ -341,7 +401,7 @@ describe("api server", () => {
 	    const response = await app.inject({
 	      method: "PATCH",
 	      url: "/v1/alert-destinations/destination-1",
-	      headers: { "x-sentinel-api-key": "dev-sentinel-key" },
+	      headers: { authorization: "Bearer sentinel_session_owner" },
 	      payload: { enabled: false }
 	    });
 
@@ -360,7 +420,7 @@ describe("api server", () => {
 	    const response = await app.inject({
 	      method: "POST",
 	      url: "/v1/alert-rules",
-	      headers: { "x-sentinel-api-key": "dev-sentinel-key" },
+	      headers: { authorization: "Bearer sentinel_session_owner" },
 	      payload: { metric: "error_rate_percent", threshold: 5, windowMinutes: 5 }
 	    });
 
@@ -374,7 +434,7 @@ describe("api server", () => {
 	    const response = await app.inject({
 	      method: "POST",
 	      url: "/v1/alert-rules",
-	      headers: { "x-sentinel-api-key": "dev-sentinel-key" },
+	      headers: { authorization: "Bearer sentinel_session_owner" },
 	      payload: { metric: "not_a_real_metric", threshold: 5, windowMinutes: 5 }
 	    });
 
@@ -387,7 +447,7 @@ describe("api server", () => {
 	    const response = await app.inject({
 	      method: "PATCH",
 	      url: "/v1/alert-rules/rule-1",
-	      headers: { "x-sentinel-api-key": "dev-sentinel-key" },
+	      headers: { authorization: "Bearer sentinel_session_owner" },
 	      payload: { enabled: false }
 	    });
 
@@ -401,7 +461,7 @@ describe("api server", () => {
 	    const response = await app.inject({
 	      method: "PATCH",
 	      url: "/v1/alert-rules/rule-1",
-	      headers: { "x-sentinel-api-key": "dev-sentinel-key" },
+	      headers: { authorization: "Bearer sentinel_session_owner" },
 	      payload: {}
 	    });
 
@@ -414,7 +474,7 @@ describe("api server", () => {
 	    const response = await app.inject({
 	      method: "GET",
 	      url: "/v1/errors",
-	      headers: { "x-sentinel-api-key": "dev-sentinel-key" }
+	      headers: { authorization: "Bearer sentinel_session_owner" }
 	    });
 
 	    expect(response.statusCode).toBe(200);
@@ -504,7 +564,7 @@ describe("api server", () => {
 	    const response = await app.inject({
 	      method: "POST",
 	      url: "/v1/api-keys",
-	      headers: { "x-sentinel-api-key": "dev-sentinel-key", authorization: "Bearer sentinel_session_owner" },
+	      headers: { authorization: "Bearer sentinel_session_owner" },
 	      payload: { name: "Production SDK" }
 	    });
 
@@ -517,7 +577,7 @@ describe("api server", () => {
 	    const response = await app.inject({
 	      method: "POST",
 	      url: "/v1/api-keys",
-	      headers: { "x-sentinel-api-key": "dev-sentinel-key", authorization: "Bearer sentinel_session_viewer" },
+	      headers: { authorization: "Bearer sentinel_session_viewer" },
 	      payload: { name: "Production SDK" }
 	    });
 
@@ -531,7 +591,7 @@ describe("api server", () => {
 	    const response = await app.inject({
 	      method: "POST",
 	      url: "/v1/api-keys",
-	      headers: { "x-sentinel-api-key": "dev-sentinel-key", authorization: "Bearer not-a-real-token" },
+	      headers: { authorization: "Bearer not-a-real-token" },
 	      payload: { name: "Production SDK" }
 	    });
 

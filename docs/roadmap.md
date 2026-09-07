@@ -26,11 +26,13 @@
 - Configurable alert rule engine: error rate, p95 latency, threat score, request volume, and authentication failure thresholds that raise incidents through the existing alert delivery pipeline
 - Application error grouping: SDK error capture, worker-side fingerprinting by type/message/endpoint, and a dashboard Errors view with occurrence counts and affected IPs
 - Real dashboard authentication: password-hashed accounts, hashed session tokens, and server-enforced project roles (owner/admin/developer/viewer) on mutating routes
+- Public signup onboarding: organization, project, owner membership, and first SDK key creation
+- Production-safe dashboard scoping: authenticated analytics, authenticated live updates, and no anonymous demo fallback in production
 
 ## v0.2 Product Hardening
 
 - Project management UI
-- User management UI: invite or create additional dashboard accounts and assign project roles
+- User management UI: invite additional dashboard accounts and assign project roles
 - API key rotation and scoped permissions
 - SDK retry backoff controls
 - Worker dead-letter stream

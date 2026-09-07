@@ -12,6 +12,7 @@ import {
   createApiKey,
   createPool,
   createSession,
+  createWorkspaceOwner,
   deleteSession,
   ensureBootstrapUser,
   getIncidentTimeline,
@@ -48,9 +49,16 @@ export async function buildServer() {
   const pool = createPool(config);
   const redis = createRedis(config);
   const metrics = createRuntimeMetrics();
-  const liveHub = attachLiveServer(app.server);
+  const liveHub = attachLiveServer(app.server, async (token, projectId) => {
+    if (!projectId) return false;
+    const session = await resolveSession(pool, token);
+    if (!session) return false;
+    return Boolean(await getProjectRole(pool, session.userId, projectId));
+  });
 
-  await ensureBootstrapUser(pool, "demo", config.adminEmail, config.adminPassword);
+  if (config.bootstrapDemoUser) {
+    await ensureBootstrapUser(pool, "demo", config.adminEmail, config.adminPassword);
+  }
 
   await app.register(cors, { origin: true });
   await app.register(rateLimit, { max: 600, timeWindow: "1 minute" });
@@ -83,7 +91,13 @@ export async function buildServer() {
       },
       async () => {
         const apiKey = String(request.headers["x-sentinel-api-key"] ?? "");
-        const key = await resolveProjectForApiKey(pool, apiKey, config.sentinelApiKey);
+        const key = await resolveProjectForApiKey(
+          pool,
+          apiKey,
+          config.sentinelApiKey,
+          undefined,
+          config.allowDevFallbackApiKey
+        );
         if (!key) {
           return reply.code(401).send({ error: "invalid_api_key" });
         }
@@ -102,11 +116,44 @@ export async function buildServer() {
         await enqueueEvents(redis, config.streamName, parsed.data.events);
         metrics.ingestionBatches += 1;
         metrics.ingestionEvents += parsed.data.events.length;
-        liveHub.publish("events.accepted", { count: parsed.data.events.length });
+        liveHub.publishToProject("events.accepted", { count: parsed.data.events.length }, key.projectId);
         return reply.code(202).send({ accepted: parsed.data.events.length });
       }
     );
   });
+
+  app.post(
+    "/v1/auth/signup",
+    {
+      config: {
+        rateLimit: {
+          max: 6,
+          timeWindow: "1 minute"
+        }
+      }
+    },
+    async (request, reply) => {
+      const parsed = SignupSchema.safeParse(request.body);
+      if (!parsed.success) {
+        return reply.code(400).send({ error: "invalid_signup_payload", details: parsed.error.flatten() });
+      }
+
+      const workspace = await createWorkspaceOwner(pool, parsed.data);
+      if (workspace.kind === "email_exists") {
+        return reply.code(409).send({ error: "email_already_registered" });
+      }
+
+      const session = await createSession(pool, workspace.user.id);
+      return reply.code(201).send({
+        token: session.token,
+        expiresAt: session.expiresAt,
+        user: workspace.user,
+        organization: workspace.organization,
+        projects: [workspace.project],
+        apiKey: workspace.apiKey
+      });
+    }
+  );
 
   app.post(
     "/v1/auth/login",
@@ -169,13 +216,13 @@ export async function buildServer() {
   });
 
   app.get("/v1/analytics/overview", async (request, reply) => {
-    const scope = await getAnalyticsProjectScope(pool, config.sentinelApiKey, request);
-    if (!scope) return reply.code(401).send({ error: "invalid_api_key" });
+    const scope = await requireProjectScope(pool, config.sentinelApiKey, config.allowDevFallbackApiKey, request, reply);
+    if (!scope) return;
     return getOverview(pool, scope.projectId);
   });
   app.get("/v1/analytics/incidents", async (request, reply) => {
-    const scope = await getAnalyticsProjectScope(pool, config.sentinelApiKey, request);
-    if (!scope) return reply.code(401).send({ error: "invalid_api_key" });
+    const scope = await requireProjectScope(pool, config.sentinelApiKey, config.allowDevFallbackApiKey, request, reply);
+    if (!scope) return;
     return getIncidents(pool, scope.projectId);
   });
   app.get("/v1/analytics/requests", async (request, reply) => {
@@ -188,8 +235,8 @@ export async function buildServer() {
       q?: string;
       limit?: string;
     };
-    const scope = await getAnalyticsProjectScope(pool, config.sentinelApiKey, request);
-    if (!scope) return reply.code(401).send({ error: "invalid_api_key" });
+    const scope = await requireProjectScope(pool, config.sentinelApiKey, config.allowDevFallbackApiKey, request, reply);
+    if (!scope) return;
 
     return getRequests(pool, {
       projectId: scope.projectId,
@@ -202,20 +249,21 @@ export async function buildServer() {
       limit: query.limit ? Number(query.limit) : undefined
     });
   });
-  app.get("/v1/analytics/system", async () =>
-    buildMetricsSnapshot(metrics, pool, redis, config.streamName, config.groupName, liveHub)
-  );
+  app.get("/v1/analytics/system", async (request, reply) => {
+    const scope = await requireProjectScope(pool, config.sentinelApiKey, config.allowDevFallbackApiKey, request, reply);
+    if (!scope) return;
+    return buildMetricsSnapshot(metrics, pool, redis, config.streamName, config.groupName, liveHub);
+  });
 
   app.get("/v1/api-keys", async (request, reply) => {
-    const scope = await getAnalyticsProjectScope(pool, config.sentinelApiKey, request);
-    if (!scope) return reply.code(401).send({ error: "invalid_api_key" });
+    const scope = await requireProjectScope(pool, config.sentinelApiKey, config.allowDevFallbackApiKey, request, reply);
+    if (!scope) return;
     return listApiKeys(pool, scope.projectId);
   });
 
   app.post("/v1/api-keys", async (request, reply) => {
-    const scope = await getAnalyticsProjectScope(pool, config.sentinelApiKey, request);
-    if (!scope) return reply.code(401).send({ error: "invalid_api_key" });
-    if (!(await enforceProjectRole(pool, request, reply, scope.projectId, "admin"))) return;
+    const scope = await requireDashboardProjectScope(pool, request, reply, "admin");
+    if (!scope) return;
 
     const parsed = CreateApiKeySchema.safeParse(request.body);
     if (!parsed.success) {
@@ -227,9 +275,8 @@ export async function buildServer() {
   });
 
   app.delete("/v1/api-keys/:id", async (request, reply) => {
-    const scope = await getAnalyticsProjectScope(pool, config.sentinelApiKey, request);
-    if (!scope) return reply.code(401).send({ error: "invalid_api_key" });
-    if (!(await enforceProjectRole(pool, request, reply, scope.projectId, "admin"))) return;
+    const scope = await requireDashboardProjectScope(pool, request, reply, "admin");
+    if (!scope) return;
 
     const { id } = request.params as { id: string };
     const revoked = await revokeApiKey(pool, scope.projectId, id);
@@ -238,9 +285,8 @@ export async function buildServer() {
   });
 
   app.patch("/v1/incidents/:id/status", async (request, reply) => {
-    const scope = await getAnalyticsProjectScope(pool, config.sentinelApiKey, request);
-    if (!scope) return reply.code(401).send({ error: "invalid_api_key" });
-    if (!(await enforceProjectRole(pool, request, reply, scope.projectId, "developer"))) return;
+    const scope = await requireDashboardProjectScope(pool, request, reply, "developer");
+    if (!scope) return;
 
     const parsed = UpdateIncidentStatusSchema.safeParse(request.body);
     if (!parsed.success) {
@@ -257,28 +303,27 @@ export async function buildServer() {
       parsed.data.note
     );
     if (!incident) return reply.code(404).send({ error: "incident_not_found" });
-    liveHub.publish("incident.updated", { id, status: parsed.data.status });
+    liveHub.publishToProject("incident.updated", { id, status: parsed.data.status }, scope.projectId);
     return incident;
   });
 
   app.get("/v1/incidents/:id/timeline", async (request, reply) => {
-    const scope = await getAnalyticsProjectScope(pool, config.sentinelApiKey, request);
-    if (!scope) return reply.code(401).send({ error: "invalid_api_key" });
+    const scope = await requireProjectScope(pool, config.sentinelApiKey, config.allowDevFallbackApiKey, request, reply);
+    if (!scope) return;
 
     const { id } = request.params as { id: string };
     return getIncidentTimeline(pool, scope.projectId, id);
   });
 
   app.get("/v1/alert-destinations", async (request, reply) => {
-    const scope = await getAnalyticsProjectScope(pool, config.sentinelApiKey, request);
-    if (!scope) return reply.code(401).send({ error: "invalid_api_key" });
+    const scope = await requireProjectScope(pool, config.sentinelApiKey, config.allowDevFallbackApiKey, request, reply);
+    if (!scope) return;
     return listAlertDestinations(pool, scope.projectId);
   });
 
   app.post("/v1/alert-destinations", async (request, reply) => {
-    const scope = await getAnalyticsProjectScope(pool, config.sentinelApiKey, request);
-    if (!scope) return reply.code(401).send({ error: "invalid_api_key" });
-    if (!(await enforceProjectRole(pool, request, reply, scope.projectId, "admin"))) return;
+    const scope = await requireDashboardProjectScope(pool, request, reply, "admin");
+    if (!scope) return;
 
     const parsed = CreateAlertDestinationSchema.safeParse(request.body);
     if (!parsed.success) {
@@ -290,9 +335,8 @@ export async function buildServer() {
   });
 
   app.patch("/v1/alert-destinations/:id", async (request, reply) => {
-    const scope = await getAnalyticsProjectScope(pool, config.sentinelApiKey, request);
-    if (!scope) return reply.code(401).send({ error: "invalid_api_key" });
-    if (!(await enforceProjectRole(pool, request, reply, scope.projectId, "admin"))) return;
+    const scope = await requireDashboardProjectScope(pool, request, reply, "admin");
+    if (!scope) return;
 
     const parsed = UpdateAlertDestinationSchema.safeParse(request.body);
     if (!parsed.success) {
@@ -306,27 +350,26 @@ export async function buildServer() {
   });
 
   app.get("/v1/alert-deliveries", async (request, reply) => {
-    const scope = await getAnalyticsProjectScope(pool, config.sentinelApiKey, request);
-    if (!scope) return reply.code(401).send({ error: "invalid_api_key" });
+    const scope = await requireProjectScope(pool, config.sentinelApiKey, config.allowDevFallbackApiKey, request, reply);
+    if (!scope) return;
     return listAlertDeliveries(pool, scope.projectId);
   });
 
   app.get("/v1/alert-rules", async (request, reply) => {
-    const scope = await getAnalyticsProjectScope(pool, config.sentinelApiKey, request);
-    if (!scope) return reply.code(401).send({ error: "invalid_api_key" });
+    const scope = await requireProjectScope(pool, config.sentinelApiKey, config.allowDevFallbackApiKey, request, reply);
+    if (!scope) return;
     return listAlertRules(pool, scope.projectId);
   });
 
   app.get("/v1/errors", async (request, reply) => {
-    const scope = await getAnalyticsProjectScope(pool, config.sentinelApiKey, request);
-    if (!scope) return reply.code(401).send({ error: "invalid_api_key" });
+    const scope = await requireProjectScope(pool, config.sentinelApiKey, config.allowDevFallbackApiKey, request, reply);
+    if (!scope) return;
     return listErrorGroups(pool, scope.projectId);
   });
 
   app.post("/v1/alert-rules", async (request, reply) => {
-    const scope = await getAnalyticsProjectScope(pool, config.sentinelApiKey, request);
-    if (!scope) return reply.code(401).send({ error: "invalid_api_key" });
-    if (!(await enforceProjectRole(pool, request, reply, scope.projectId, "admin"))) return;
+    const scope = await requireDashboardProjectScope(pool, request, reply, "admin");
+    if (!scope) return;
 
     const parsed = CreateAlertRuleSchema.safeParse(request.body);
     if (!parsed.success) {
@@ -344,9 +387,8 @@ export async function buildServer() {
   });
 
   app.patch("/v1/alert-rules/:id", async (request, reply) => {
-    const scope = await getAnalyticsProjectScope(pool, config.sentinelApiKey, request);
-    if (!scope) return reply.code(401).send({ error: "invalid_api_key" });
-    if (!(await enforceProjectRole(pool, request, reply, scope.projectId, "admin"))) return;
+    const scope = await requireDashboardProjectScope(pool, request, reply, "admin");
+    if (!scope) return;
 
     const parsed = UpdateAlertRuleSchema.safeParse(request.body);
     if (!parsed.success) {
@@ -369,8 +411,15 @@ export async function buildServer() {
 }
 
 const LoginSchema = z.object({
-  email: z.string().trim().email(),
+  email: z.string().trim().email().transform((value) => value.toLowerCase()),
   password: z.string().min(1)
+});
+
+const SignupSchema = z.object({
+  email: z.string().trim().email().transform((value) => value.toLowerCase()),
+  password: z.string().min(8).max(128),
+  organizationName: z.string().trim().min(2).max(80),
+  projectName: z.string().trim().min(2).max(80)
 });
 
 const CreateApiKeySchema = z.object({
@@ -409,17 +458,36 @@ const UpdateAlertRuleSchema = z
     message: "At least one of enabled, threshold, or windowMinutes must be provided."
   });
 
-async function getAnalyticsProjectScope(
+type ProjectScope = {
+  projectId: string;
+  keyId?: string;
+  userId?: string;
+};
+
+async function requireProjectScope(
   pool: ReturnType<typeof createPool>,
   fallbackApiKey: string,
-  request: FastifyRequest
-) {
-  const apiKeyHeader = request.headers["x-sentinel-api-key"];
-  if (!apiKeyHeader) return { projectId: "demo", keyId: "anonymous-demo" };
+  allowFallbackApiKey: boolean,
+  request: FastifyRequest,
+  reply: import("fastify").FastifyReply
+): Promise<ProjectScope | null> {
+  const sessionScope = await getSessionProjectScope(pool, request, reply);
+  if (sessionScope) return sessionScope;
+  if (reply.sent) return null;
 
+  const apiKeyHeader = request.headers["x-sentinel-api-key"];
+  if (!apiKeyHeader) {
+    reply.code(401).send({ error: "authentication_required" });
+    return null;
+  }
   const requestedProjectId = (request.query as { projectId?: string } | undefined)?.projectId;
   const apiKey = Array.isArray(apiKeyHeader) ? apiKeyHeader[0] : apiKeyHeader;
-  return resolveProjectForApiKey(pool, apiKey, fallbackApiKey, requestedProjectId);
+  const scope = await resolveProjectForApiKey(pool, apiKey, fallbackApiKey, requestedProjectId, allowFallbackApiKey);
+  if (!scope) {
+    reply.code(401).send({ error: "invalid_api_key" });
+    return null;
+  }
+  return scope;
 }
 
 function getBearerToken(request: FastifyRequest): string | undefined {
@@ -428,32 +496,49 @@ function getBearerToken(request: FastifyRequest): string | undefined {
   return header.slice("Bearer ".length);
 }
 
-// Role enforcement only applies when the caller presents a dashboard session token. A caller
-// authenticating with a project API key (SDKs, automation, the shared dev fallback) is a
-// coarser-grained trust tier than a human dashboard role and is unaffected by this check.
-async function enforceProjectRole(
+async function requireDashboardProjectScope(
   pool: ReturnType<typeof createPool>,
   request: FastifyRequest,
   reply: import("fastify").FastifyReply,
-  projectId: string,
   minimumRole: string
-): Promise<boolean> {
+): Promise<ProjectScope | null> {
+  return getSessionProjectScope(pool, request, reply, minimumRole);
+}
+
+async function getSessionProjectScope(
+  pool: ReturnType<typeof createPool>,
+  request: FastifyRequest,
+  reply: import("fastify").FastifyReply,
+  minimumRole?: string
+): Promise<ProjectScope | null> {
   const token = getBearerToken(request);
-  if (!token) return true;
+  if (!token) return null;
 
   const session = await resolveSession(pool, token);
   if (!session) {
     reply.code(401).send({ error: "invalid_session" });
-    return false;
+    return null;
   }
 
+  const requestedProjectId = (request.query as { projectId?: string } | undefined)?.projectId;
+  const memberships = await listMembershipsForUser(pool, session.userId);
+  const membership =
+    memberships.find((entry) => entry.project_id === requestedProjectId) ??
+    (!requestedProjectId ? memberships[0] : undefined);
+
+  if (!membership) {
+    reply.code(403).send({ error: "project_access_denied" });
+    return null;
+  }
+
+  const projectId = membership.project_id as string;
   const role = await getProjectRole(pool, session.userId, projectId);
-  if (!roleMeetsMinimum(role, minimumRole)) {
+  if (minimumRole && !roleMeetsMinimum(role, minimumRole)) {
     reply.code(403).send({ error: "insufficient_role", required: minimumRole });
-    return false;
+    return null;
   }
 
-  return true;
+  return { projectId, userId: session.userId };
 }
 
 if (process.env.NODE_ENV !== "test") {

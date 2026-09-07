@@ -35,6 +35,8 @@ create table if not exists users (
   created_at timestamptz not null default now()
 );
 
+create unique index if not exists users_email_lower_idx on users(lower(email));
+
 create table if not exists project_memberships (
   id uuid primary key default gen_random_uuid(),
   project_id text not null references projects(id) on delete cascade,
