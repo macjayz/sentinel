@@ -8,8 +8,8 @@
   },
   "dependencies": {
     "@sentinel/sdk-node": "0.1.0",
-    "body-parser": "^1.20.2",
-    "express": "^4.19.2",
+    "body-parser": "^2.3.0",
+    "express": "^5.2.1",
     "tsx": "^4.19.0"
   }
 }

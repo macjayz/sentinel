@@ -180,6 +180,7 @@ export async function buildServer() {
   });
   app.get("/v1/analytics/requests", async (request, reply) => {
     const query = request.query as {
+      kind?: string;
       method?: string;
       status?: string;
       threatMin?: string;
@@ -192,6 +193,7 @@ export async function buildServer() {
 
     return getRequests(pool, {
       projectId: scope.projectId,
+      kind: query.kind,
       method: query.method,
       status: query.status ? Number(query.status) : undefined,
       threatMin: query.threatMin ? Number(query.threatMin) : undefined,

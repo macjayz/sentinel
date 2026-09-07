@@ -9,7 +9,6 @@
     "preview": "vite preview --host 0.0.0.0"
   },
   "dependencies": {
-    "@vitejs/plugin-react": "^4.3.1",
     "lucide-react": "^0.468.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
@@ -17,7 +16,8 @@
   "devDependencies": {
     "@types/react": "^18.3.4",
     "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^5.1.4",
     "typescript": "^5.5.4",
-    "vite": "^5.4.2"
+    "vite": "^7.3.6"
   }
 }

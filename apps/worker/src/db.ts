@@ -1,5 +1,12 @@
 import pg from "pg";
-import { SentinelEvent, ThreatAssessment, Web3ThreatContext, withSpan } from "@sentinel/shared";
+import {
+  redactHeaders,
+  redactValue,
+  SentinelEvent,
+  ThreatAssessment,
+  Web3ThreatContext,
+  withSpan
+} from "@sentinel/shared";
 import { AlertRule } from "./alertRules.js";
 import { WorkerConfig } from "./config.js";
 import { fingerprintError } from "./errors.js";
@@ -126,6 +133,9 @@ export async function getWeb3ThreatContext(pool: pg.Pool, event: SentinelEvent):
 }
 
 export async function persistEvent(pool: pg.Pool, event: SentinelEvent, assessment: ThreatAssessment) {
+  const requestHeaders = redactHeaders(event.request.headers);
+  const requestBody = redactValue(event.request.body ?? null);
+
   await withSpan(
     "sentinel.postgres.persist_event",
     {
@@ -168,9 +178,9 @@ export async function persistEvent(pool: pg.Pool, event: SentinelEvent, assessme
           event.request.route,
           event.request.ip,
           event.request.userAgent,
-          toJsonb(event.request.headers),
+          toJsonb(requestHeaders),
           toJsonb(event.request.query),
-          toJsonb(event.request.body ?? null),
+          toJsonb(requestBody),
           event.response.statusCode,
           event.response.latencyMs,
           event.response.bodyBytes ?? null,

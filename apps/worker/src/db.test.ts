@@ -56,6 +56,41 @@ describe("worker database persistence", () => {
     expect(JSON.parse(params[33] as string)).toEqual(assessment.signals);
   });
 
+  it("redacts sensitive request data before storage", async () => {
+    const query = vi.fn().mockResolvedValue({ rows: [], rowCount: 1 });
+    const pool = { query };
+    const sensitiveEvent: SentinelEvent = {
+      ...event,
+      request: {
+        ...event.request,
+        headers: {
+          authorization: "Bearer secret",
+          "x-api-key": "sentinel_secret",
+          "x-request-id": "request-1"
+        },
+        body: {
+          email: "owner@sentinel.local",
+          password: "secret-password",
+          nested: { token: "secret-token" }
+        }
+      }
+    };
+
+    await persistEvent(pool as never, sensitiveEvent, assessment);
+
+    const params = query.mock.calls[0]?.[1] as unknown[];
+    expect(JSON.parse(params[13] as string)).toEqual({
+      authorization: "[REDACTED]",
+      "x-api-key": "[REDACTED]",
+      "x-request-id": "request-1"
+    });
+    expect(JSON.parse(params[15] as string)).toEqual({
+      email: "owner@sentinel.local",
+      password: "[REDACTED]",
+      nested: { token: "[REDACTED]" }
+    });
+  });
+
   it("persists captured error details when present", async () => {
     const query = vi.fn().mockResolvedValue({ rows: [], rowCount: 1 });
     const pool = { query };

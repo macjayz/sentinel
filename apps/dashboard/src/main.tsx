@@ -395,7 +395,7 @@ function App() {
     void load();
     const interval = window.setInterval(() => void load(), 15000);
     return () => window.clearInterval(interval);
-  }, [session, requestFilters, selectedProjectId]);
+  }, [activeView, session, requestFilters, selectedProjectId]);
 
   async function createDashboardApiKey() {
     setActionError(null);
@@ -576,6 +576,7 @@ function App() {
     if (requestFilters.threatMin) params.set("threatMin", requestFilters.threatMin);
     if (requestFilters.ip) params.set("ip", requestFilters.ip);
     if (requestFilters.query) params.set("q", requestFilters.query);
+    if (activeView === "rpc") params.set("kind", "evm_rpc");
     params.set("limit", "50");
 
     const response = await apiFetch(`/v1/analytics/requests?${params.toString()}`, selectedProjectId);
@@ -657,9 +658,6 @@ function App() {
           </button>
           <button className={activeView === "rpc" ? "active" : ""} onClick={() => changeView("rpc")}>
             RPC
-          </button>
-          <button className="disabled" disabled>
-            Sources
           </button>
         </nav>
 

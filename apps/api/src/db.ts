@@ -404,6 +404,7 @@ export async function listErrorGroups(pool: pg.Pool, projectId: string) {
 
 export type RequestFilters = {
   projectId?: string;
+  kind?: string;
   method?: string;
   status?: number;
   threatMin?: number;
@@ -415,6 +416,11 @@ export type RequestFilters = {
 export async function getRequests(pool: pg.Pool, filters: RequestFilters = {}) {
   const clauses: string[] = ["project_id = $1"];
   const values: Array<string | number> = [filters.projectId ?? "demo"];
+
+  if (filters.kind) {
+    values.push(filters.kind);
+    clauses.push(`kind = $${values.length}`);
+  }
 
   if (filters.method) {
     values.push(filters.method.toUpperCase());

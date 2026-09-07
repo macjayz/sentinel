@@ -26,15 +26,17 @@
     "concurrently": "^9.0.1",
     "eslint": "9.9.0",
     "prettier": "^3.3.3",
-    "rollup": "4.21.2",
+    "rollup": "^4.63.1",
     "tsx": "^4.19.0",
     "typescript": "^5.5.4",
-    "vitest": "^2.0.5"
+    "vite": "^7.3.6",
+    "vitest": "^4.1.11"
   },
   "engines": {
     "node": ">=20"
   },
   "optionalDependencies": {
-    "@rollup/rollup-darwin-arm64": "^4.21.2"
-  }
+    "@rollup/rollup-darwin-arm64": "^4.63.1"
+  },
+  "overrides": {}
 }

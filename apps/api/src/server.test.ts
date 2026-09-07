@@ -214,6 +214,22 @@ describe("api server", () => {
     await app.close();
   });
 
+  it("passes request kind filters to analytics queries", async () => {
+    const { app } = await buildServer();
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/analytics/requests?kind=evm_rpc&limit=10",
+      headers: { "x-sentinel-api-key": "dev-sentinel-key" }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(dbMocks.getRequests).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ kind: "evm_rpc", projectId: "demo" })
+    );
+    await app.close();
+  });
+
   it("scopes authenticated analytics to the requested project id", async () => {
     const { app } = await buildServer();
     const response = await app.inject({

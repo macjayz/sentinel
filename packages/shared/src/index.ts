@@ -93,6 +93,8 @@ const defaultSensitiveFields = [
   "accessToken",
   "refreshToken",
   "apiKey",
+  "xApiKey",
+  "xSentinelApiKey",
   "privateKey",
   "mnemonic"
 ];
