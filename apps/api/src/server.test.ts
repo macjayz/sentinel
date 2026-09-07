@@ -157,6 +157,10 @@ vi.mock("./queue.js", () => ({
   enqueueEvents: vi.fn()
 }));
 
+vi.mock("./seed.js", () => ({
+  seedDemoEventsIfEmpty: vi.fn(() => 0)
+}));
+
 describe("api server", () => {
   beforeEach(() => {
     vi.clearAllMocks();

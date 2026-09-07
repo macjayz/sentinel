@@ -1,6 +1,8 @@
 import { context, SpanStatusCode, trace, type AttributeValue } from "@opentelemetry/api";
 import { z } from "zod";
 
+export { buildDemoEvents } from "./demoEvents.js";
+
 export const HttpMethodSchema = z.enum([
   "GET",
   "POST",

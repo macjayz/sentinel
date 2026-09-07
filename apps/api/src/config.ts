@@ -5,6 +5,7 @@ export type ApiConfig = {
   sentinelApiKey: string;
   allowDevFallbackApiKey: boolean;
   bootstrapDemoUser: boolean;
+  seedDemoEvents: boolean;
   streamName: string;
   groupName: string;
   adminEmail: string;
@@ -25,6 +26,11 @@ export function loadConfig(): ApiConfig {
     bootstrapDemoUser:
       process.env.SENTINEL_BOOTSTRAP_DEMO_USER === "true" ||
       (!isProduction && process.env.SENTINEL_BOOTSTRAP_DEMO_USER !== "false"),
+    // Only ever seeds the "demo" project, and only when it's genuinely empty (see seedDemoEventsIfEmpty
+    // in seed.ts) — never touches a real signed-up user's project, and never re-seeds on every restart.
+    seedDemoEvents:
+      process.env.SENTINEL_SEED_DEMO_EVENTS === "true" ||
+      (!isProduction && process.env.SENTINEL_SEED_DEMO_EVENTS !== "false"),
     streamName: process.env.SENTINEL_STREAM ?? "sentinel:events",
     groupName: process.env.SENTINEL_GROUP ?? "sentinel-workers",
     adminEmail: process.env.SENTINEL_ADMIN_EMAIL ?? "owner@sentinel.local",

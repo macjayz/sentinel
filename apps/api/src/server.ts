@@ -42,6 +42,7 @@ import {
   toPrometheus
 } from "./observability.js";
 import { createRedis, enqueueEvents } from "./queue.js";
+import { seedDemoEventsIfEmpty } from "./seed.js";
 
 export async function buildServer() {
   const config = loadConfig();
@@ -58,6 +59,11 @@ export async function buildServer() {
 
   if (config.bootstrapDemoUser) {
     await ensureBootstrapUser(pool, "demo", config.adminEmail, config.adminPassword);
+  }
+
+  if (config.seedDemoEvents) {
+    const seeded = await seedDemoEventsIfEmpty(pool, redis, config.streamName, "demo");
+    if (seeded > 0) app.log.info({ seeded }, "seeded demo project with sample traffic");
   }
 
   await app.register(cors, { origin: true });

@@ -99,6 +99,21 @@ Sentinel is designed to make those answers visible in a self-hosted stack develo
 
 Sentinel is under active MVP implementation.
 
+## Quick Start
+
+```bash
+git clone <this repo>
+cd sentinel
+docker compose up --build
+```
+
+Open `http://localhost:5173` and sign in with `owner@sentinel.local` / `sentinel-demo` (or click
+**Create account** to self-provision your own isolated organization, project, and SDK key). The
+`demo` project comes pre-populated with realistic sample traffic — REST, GraphQL, and EVM RPC
+requests, an already-detected incident — on first boot, with no extra steps and no local Node.js
+required. Nothing re-seeds on later restarts; it only fires once, the first time the `demo`
+project has zero events.
+
 ## Local Development
 
 Install dependencies:
@@ -107,13 +122,7 @@ Install dependencies:
 npm install
 ```
 
-Run the full self-hosted stack:
-
-```bash
-docker compose up --build
-```
-
-Run services locally:
+Run services locally instead of in Docker:
 
 ```bash
 npm run dev
@@ -125,7 +134,9 @@ Use the Express example after the API is running:
 npm run dev -w examples/express
 ```
 
-Seed realistic demo traffic after the API and worker are running:
+Post additional synthetic traffic into any project at any time (this is what auto-seeds the `demo`
+project on first Docker boot; run it directly if you want more data, or data in a different
+project):
 
 ```bash
 npm run seed:demo
@@ -165,6 +176,7 @@ Dashboard access:
 - The dashboard authenticates against real password-hashed accounts and issued sessions; sign-in is not simulated.
 - Public signup creates an isolated organization, first project, owner-role membership, and one-time initial SDK API key for the new account.
 - In non-production environments, the API bootstraps one owner-role account for the `demo` project using `SENTINEL_ADMIN_EMAIL` and `SENTINEL_ADMIN_PASSWORD` (defaults: `owner@sentinel.local` / `sentinel-demo`). In production, set `SENTINEL_BOOTSTRAP_DEMO_USER=true` only when you intentionally want that demo account.
+- In non-production environments, the API also seeds the `demo` project with realistic sample traffic the first time it boots against a project that has zero events (`SENTINEL_SEED_DEMO_EVENTS`, on by default outside production). It never re-seeds once the project has any events, real or sample, and it never touches a real signed-up user's project.
 - Passwords are hashed with scrypt; sessions are opaque bearer tokens, hashed at rest, valid for 7 days.
 - Roles (`owner`, `admin`, `developer`, `viewer`) are enforced server-side on dashboard mutating requests (API keys, alert destinations, alert rules, incident status) — not just hidden in the UI.
 - The signed-in shell shows the current organization, operator role, and selected project.

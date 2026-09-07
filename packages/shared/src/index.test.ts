@@ -1,12 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
   assessThreat,
+  buildDemoEvents,
   classifyTraffic,
   normalizeErrorMessage,
   normalizeRoutePath,
   redactHeaders,
   redactValue,
-  SentinelEvent
+  SentinelEvent,
+  SentinelEventSchema
 } from "./index.js";
 
 describe("shared security helpers", () => {
@@ -157,5 +159,29 @@ describe("shared security helpers", () => {
   it("does not flag a normal rpc provider failure rate", () => {
     const assessment = assessThreat(rpcEvent, 0, { providerRecentFailureRate: 0.05 });
     expect(assessment.signals.map((signal) => signal.name)).not.toContain("provider_failures");
+  });
+});
+
+describe("buildDemoEvents", () => {
+  it("produces a realistic, varied batch scoped to the requested project", () => {
+    const events = buildDemoEvents({ projectId: "demo", serviceName: "demo-api" });
+
+    expect(events.length).toBeGreaterThan(100);
+    expect(events.every((event) => event.projectId === "demo")).toBe(true);
+    expect(events.some((event) => event.kind === "graphql")).toBe(true);
+    expect(events.some((event) => event.kind === "evm_rpc")).toBe(true);
+    expect(events.some((event) => event.request.auth.failed)).toBe(true);
+  });
+
+  it("produces events that pass the real ingestion schema", () => {
+    const events = buildDemoEvents({ projectId: "demo", serviceName: "demo-api" });
+    for (const event of events) {
+      expect(SentinelEventSchema.safeParse(event).success).toBe(true);
+    }
+  });
+
+  it("scopes generated events to a different project id", () => {
+    const events = buildDemoEvents({ projectId: "checkout", serviceName: "checkout-api" });
+    expect(events.every((event) => event.projectId === "checkout")).toBe(true);
   });
 });

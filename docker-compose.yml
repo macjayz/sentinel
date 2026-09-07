@@ -37,8 +37,15 @@ services:
       DATABASE_URL: postgres://sentinel:sentinel@postgres:5432/sentinel
       REDIS_URL: redis://redis:6379
       SENTINEL_API_KEY: dev-sentinel-key
+      # These three flags default to disabled whenever NODE_ENV=production (which the API's own
+      # Dockerfile sets). They're explicit here, not just relying on that default, because they're
+      # what makes `docker compose up --build` usable out of the box: a demo login, the shared dev
+      # API key, and sample traffic so the dashboard isn't empty on first boot. Removing them is
+      # safe (the stack still runs) but breaks the zero-config demo experience for new users. Do not
+      # set any of these to "true" on a real deployment you're exposing publicly.
       SENTINEL_ALLOW_DEV_FALLBACK_KEY: "true"
       SENTINEL_BOOTSTRAP_DEMO_USER: "true"
+      SENTINEL_SEED_DEMO_EVENTS: "true"
     ports:
       - "8080:8080"
     depends_on:
