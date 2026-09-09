@@ -1,277 +1,189 @@
 # Sentinel
 
-Self-hosted API security and observability for Node.js applications.
+**Sentinel catches the EVM RPC failures that return `200 OK`.**
 
-Sentinel monitors REST, GraphQL, WebSocket, webhook, and EVM JSON-RPC traffic through a lightweight SDK, an ingestion pipeline, a threat engine, and a dashboard. The MVP focuses on Express applications while keeping the architecture modular enough for additional runtimes and chains later.
-
-![Sentinel dashboard sign in](assets/screenshots/dashboard-auth.png)
-
-![Sentinel dashboard overview](assets/screenshots/dashboard-overview.png)
-
-![Sentinel request explorer](assets/screenshots/request-explorer.png)
-
-![Sentinel API key management](assets/screenshots/api-key-management.png)
+Cross-provider verification, stale-head detection, silent-failure detection, and cost accounting for
+Ethereum JSON-RPC traffic. Self-hosted, MIT licensed.
 
 ![Sentinel RPC activity](assets/screenshots/rpc-activity.png)
 
-## MVP Scope
+## The problem
 
-Sentinel v0 targets:
+Your app asks an RPC provider for a balance. The provider returns `200 OK`. Your monitoring is green.
 
-- Node.js applications
-- Express middleware
-- REST and GraphQL request monitoring
-- Ethereum/EVM JSON-RPC monitoring
-- Request and response metadata
-- Trace IDs for request correlation
-- Organization and project scoped storage
-- Latency, error, endpoint, IP, and authentication failure tracking
-- Configurable sensitive-field redaction
-- Abnormal request-rate detection
-- API Threat Score calculation
-- Incidents and security events
-- Real-time dashboard updates
-- Docker-based self-hosting
+But the provider may have answered from a node 40 blocks behind. Or returned `null` for a log query
+it silently truncated. Or failed over to a backup region that disagrees with the primary. Or served
+a block that got reorged out three seconds later. Every one of those is a `200 OK` with a
+sub-100ms latency, and every one of them puts wrong data in front of your users or your keeper bot.
 
-Out of scope for the first release:
+Nothing in a normal observability stack can see this. Datadog sees a fast HTTP 200. Sentry sees no
+exception. Your provider's status page is green, because from their side nothing errored.
 
-- Kubernetes operator
-- Python, Go, and mobile SDKs
-- Solana support
-- Machine-learning threat detection
-- Enterprise SSO
-- Billing
-- Multi-region deployment
-- Full SIEM features
-- Packet-level network inspection
-- WAF replacement
-- Vulnerability scanning
+The only way to catch it is to check the *content* of RPC responses, and to compare providers
+against each other at the same block height. That is what Sentinel does.
 
-## Architecture
+## What Sentinel detects
 
-```text
-User Application
-  |
-Sentinel SDK
-  |
-Ingestion API
-  |
-Event Queue
-  |
-Worker and Threat Engine
-  |
-PostgreSQL
-  |
-Analytics API and WebSocket API
-  |
-Dashboard
-```
+| Detector | What it catches | Status |
+|---|---|---|
+| **Stale head** | Provider serving a chain head that has stopped advancing, or that lags the fastest provider you use | Planned — [D1](docs/detectors.md#d1--stale-head) |
+| **Cross-provider disagreement** | Two providers returning different results for the same call at the *same block height* | Planned — [D2](docs/detectors.md#d2--cross-provider-disagreement) |
+| **Silent failure** | `200 OK` carrying `result: null`, an empty log range, or a JSON-RPC error inside a success body | Planned — [D3](docs/detectors.md#d3--silent-failure) |
+| **Reorg lag** | Providers that keep serving a block after it has been reorged out, and how deep the reorg went | Planned — [D4](docs/detectors.md#d4--reorg-lag) |
+| **Throttling as success** | Rate limiting that arrives as degraded results rather than `429` | Planned — [D5](docs/detectors.md#d5--throttling-as-success) |
+| **Cost and waste** | Compute units burned per method, and duplicate identical calls within the same block | Planned — [D6](docs/detectors.md#d6--cost-and-waste) |
+| **Provider degradation** | p95 latency regression against the provider's own recent baseline | **Shipping** |
+| **Provider failure rate** | Abnormal share of hard failures from one provider | **Shipping** |
+| **RPC flooding** | One method called far above its normal rate from a single source | **Shipping** |
+| **Transaction burst** | Wallet submission volume spiking above its historical baseline | **Shipping** |
 
-SDK traffic never writes directly to the database. Events move through the ingestion API and queue first, so monitored applications are protected from database latency and traffic bursts.
+See [docs/detectors.md](docs/detectors.md) for the precise definition, inputs, and false-positive
+handling for each one.
 
-## Packages
+## Honest status
 
-The repository is organized as a TypeScript monorepo:
+Sentinel today is a **working self-hosted pipeline** — SDK, ingestion API, queue, worker, threat
+engine, Postgres, dashboard, incidents, alerting — with **per-call RPC observability**: method,
+chain, provider, latency, and hard failures.
 
-- `apps/api`: ingestion, analytics, and WebSocket API
-- `apps/worker`: queue consumer, aggregation, and incident creation
-- `apps/dashboard`: operator dashboard
-- `packages/sdk-node`: Express middleware and Node client
-- `packages/web3`: EVM JSON-RPC client and viem-compatible transport wrapper
-- `packages/shared`: common schemas, redaction, scoring, and types
-- `infra`: Docker Compose and database migrations
+The content-aware detectors above (D1–D6) are **not built yet**. They require capturing and
+normalizing RPC *results*, which the current recorder deliberately discards. That work is
+[Phase 1 of the roadmap](docs/roadmap.md) and it is the reason this project exists.
 
-## Why This Project Matters
+This README describes where Sentinel is going and marks clearly what already runs. Nothing in the
+"Shipping" rows above is aspirational.
 
-Most teams can see application logs, but they cannot easily answer security-focused API questions:
+## Use it
 
-- Which endpoints are newly discovered?
-- Which IPs are causing authentication failures?
-- Which GraphQL operations are slow or failing?
-- Which EVM JSON-RPC methods are risky?
-- Which requests should become incidents?
-- Which related security signals belong to the same incident?
-- Which alerts were queued and which incidents still need response?
+`@sentinel/web3` is not on npm yet ([Phase 4](docs/roadmap.md#phase-4--adoption)) — build it from
+this repo with `npm install && npm run build`.
 
-Sentinel is designed to make those answers visible in a self-hosted stack developers can understand and extend.
-
-## Status
-
-Sentinel is under active MVP implementation.
-
-## Quick Start
-
-```bash
-git clone <this repo>
-cd sentinel
-docker compose up --build
-```
-
-Open `http://localhost:5173` and sign in with `owner@sentinel.local` / `sentinel-demo` (or click
-**Create account** to self-provision your own isolated organization, project, and SDK key). The
-`demo` project comes pre-populated with realistic sample traffic — REST, GraphQL, and EVM RPC
-requests, an already-detected incident — on first boot, with no extra steps and no local Node.js
-required. Nothing re-seeds on later restarts; it only fires once, the first time the `demo`
-project has zero events.
-
-## Local Development
-
-Install dependencies:
-
-```bash
-npm install
-```
-
-Run services locally instead of in Docker:
-
-```bash
-npm run dev
-```
-
-Use the Express example after the API is running:
-
-```bash
-npm run dev -w examples/express
-```
-
-Post additional synthetic traffic into any project at any time (this is what auto-seeds the `demo`
-project on first Docker boot; run it directly if you want more data, or data in a different
-project):
-
-```bash
-npm run seed:demo
-```
-
-The seed script posts events through the ingestion API. With Postgres, Redis, the API, and worker running, those events move through the live pipeline before appearing in the dashboard.
-
-The dashboard runs at `http://localhost:5173` and the API runs at `http://localhost:8080`.
-
-Operational endpoints:
-
-- `GET /health`: process liveness
-- `GET /ready`: database and queue readiness
-- `GET /metrics`: Prometheus-style Sentinel runtime metrics
-- `POST /v1/auth/signup`: create an organization, first project, owner user, and initial SDK API key
-- `POST /v1/auth/login`: authenticate with email and password, returns a session token and real project roles
-- `GET /v1/auth/session`: validate a session token and return the current user, organization, and project roles
-- `POST /v1/auth/logout`: invalidate a session token
-- `GET /v1/analytics/system`: JSON system metrics for the dashboard
-- `GET /v1/analytics/requests`: recent request explorer data with method, status, IP, path, and threat filters
-- `GET /v1/api-keys`: list project-scoped SDK API keys
-- `POST /v1/api-keys`: create a new project-scoped SDK API key (requires `admin` role when called with a session token)
-- `DELETE /v1/api-keys/:id`: revoke a project-scoped SDK API key (requires `admin` role when called with a session token)
-- `PATCH /v1/incidents/:id/status`: update incident workflow status (requires `developer` role when called with a session token)
-- `GET /v1/incidents/:id/timeline`: list status timeline entries
-- `GET /v1/alert-destinations`: list project webhook destinations
-- `POST /v1/alert-destinations`: create a project webhook destination (requires `admin` role when called with a session token)
-- `PATCH /v1/alert-destinations/:id`: enable or disable a webhook destination (requires `admin` role when called with a session token)
-- `GET /v1/alert-deliveries`: list queued alert delivery records
-- `GET /v1/alert-rules`: list project alert threshold rules
-- `POST /v1/alert-rules`: create an alert threshold rule (requires `admin` role when called with a session token)
-- `PATCH /v1/alert-rules/:id`: update or enable/disable an alert threshold rule (requires `admin` role when called with a session token)
-- `GET /v1/errors`: list grouped application errors by type, message, and endpoint
-
-Dashboard access:
-
-- The dashboard authenticates against real password-hashed accounts and issued sessions; sign-in is not simulated.
-- Public signup creates an isolated organization, first project, owner-role membership, and one-time initial SDK API key for the new account.
-- In non-production environments, the API bootstraps one owner-role account for the `demo` project using `SENTINEL_ADMIN_EMAIL` and `SENTINEL_ADMIN_PASSWORD` (defaults: `owner@sentinel.local` / `sentinel-demo`). In production, set `SENTINEL_BOOTSTRAP_DEMO_USER=true` only when you intentionally want that demo account.
-- In non-production environments, the API also seeds the `demo` project with realistic sample traffic the first time it boots against a project that has zero events (`SENTINEL_SEED_DEMO_EVENTS`, on by default outside production). It never re-seeds once the project has any events, real or sample, and it never touches a real signed-up user's project.
-- Passwords are hashed with scrypt; sessions are opaque bearer tokens, hashed at rest, valid for 7 days.
-- Roles (`owner`, `admin`, `developer`, `viewer`) are enforced server-side on dashboard mutating requests (API keys, alert destinations, alert rules, incident status) — not just hidden in the UI.
-- The signed-in shell shows the current organization, operator role, and selected project.
-- The project switcher scopes dashboard analytics requests to projects where the signed-in user has membership.
-- The API Keys view provides project key listing, one-time key reveal, revoke actions, and an SDK setup snippet.
-- The Incidents view supports status filters and open, acknowledged, resolved, and ignored workflows.
-- The Alerts view manages webhook destinations and shows queued high-severity incident deliveries.
-- Live dashboard updates require a valid session token and project membership.
-
-Production mode:
-
-- Set `NODE_ENV=production` for public deployments.
-- Production mode disables the shared development fallback key unless `SENTINEL_ALLOW_DEV_FALLBACK_KEY=true` is explicitly set.
-- Dashboard API calls use session bearer tokens, not a shared browser-exposed API key.
-- Use `VITE_SENTINEL_DEMO_MODE=true` only for a separate demo build where local fallback data is acceptable.
-
-Web3 RPC:
-
-- `@sentinel/web3` records EVM JSON-RPC method, chain ID, provider, latency, errors, and related addresses.
-- `createSentinelRpcClient` wraps standalone JSON-RPC calls.
-- `wrapEip1193Provider` instruments EIP-1193 providers.
-- `sentinelTransport` provides a viem-compatible transport factory for `createPublicClient`.
-- The RPC dashboard view summarizes EVM RPC failures, latency, providers, chains, and threat scores.
-
-Multi-tenancy:
-
-- Projects belong to organizations.
-- API keys are scoped to projects.
-- Ingestion rejects events whose `projectId` does not match the API key scope.
-- Dashboard analytics require a valid session and project membership; SDK/API access requires a valid project-scoped API key.
-- All persisted telemetry, incidents, alert rules, delivery records, and error groups are filtered by `project_id`.
-
-Tracing:
-
-- SDK events include a `traceId`.
-- Ingestion, Redis enqueue, worker processing, PostgreSQL writes, and WebSocket fanout are wrapped in OpenTelemetry spans.
-- Exporters are intentionally left to deployers so self-hosters can connect Sentinel to their own collector.
-
-## Example SDK Usage
+Wrap any EIP-1193 provider:
 
 ```ts
-import express from "express";
-import { sentinelExpress } from "@sentinel/sdk-node";
+import { wrapEip1193Provider } from "@sentinel/web3";
 
-const app = express();
-
-app.use(
-  sentinelExpress({
-    projectId: "demo",
-    apiKey: "dev-sentinel-key",
-    endpoint: "http://localhost:8080",
-    serviceName: "payments-api"
-  })
-);
-```
-
-## Example Web3 Usage
-
-```ts
-import { sentinelTransport } from "@sentinel/web3";
-
-const transport = sentinelTransport({
-  projectId: "demo",
+const provider = wrapEip1193Provider(window.ethereum, {
+  projectId: "my-project",
   apiKey: process.env.SENTINEL_API_KEY!,
-  endpoint: "http://localhost:8080",
-  rpcUrl: process.env.EVM_RPC_URL!,
+  endpoint: "https://sentinel.internal",
   chainId: 1,
   provider: "alchemy"
 });
 ```
 
+Or use the viem transport:
+
+```ts
+import { createPublicClient } from "viem";
+import { mainnet } from "viem/chains";
+import { sentinelTransport } from "@sentinel/web3";
+
+const client = createPublicClient({
+  chain: mainnet,
+  transport: sentinelTransport({
+    projectId: "my-project",
+    apiKey: process.env.SENTINEL_API_KEY!,
+    endpoint: "https://sentinel.internal",
+    rpcUrl: process.env.EVM_RPC_URL!,
+    chainId: 1,
+    provider: "alchemy"
+  })
+});
+```
+
+Your RPC URL never leaves your process. Sentinel records a hash of the endpoint, never the URL
+itself, because provider URLs embed API keys.
+
+## Run it
+
+```bash
+git clone https://github.com/macjayz/sentinel.git
+cd sentinel
+docker compose up --build
+```
+
+Open `http://localhost:5173` and sign in with `owner@sentinel.local` / `sentinel-demo`, or create
+your own account. The `demo` project is seeded with realistic sample traffic on first boot.
+
+The dashboard runs at `http://localhost:5173`, the API at `http://localhost:8080`.
+
+## How it works
+
+```text
+Your app
+  |
+@sentinel/web3          EIP-1193 wrapper / viem transport
+  |
+Ingestion API           validates, scopes to project, never blocks your app
+  |
+Redis Stream            your RPC calls are never slowed by Sentinel's storage
+  |
+Worker + detectors      scoring, cross-provider comparison, incident grouping
+  |
+PostgreSQL
+  |
+Dashboard + WebSocket
+```
+
+The SDK never writes to the database directly. RPC calls in your application are not slowed by
+Sentinel's storage layer, and a Sentinel outage cannot take down your app.
+
+Full design in [ARCHITECTURE.md](ARCHITECTURE.md).
+
+## Supporting capability: your service's HTTP traffic
+
+Sentinel also instruments Express, REST, and GraphQL traffic through `@sentinel/sdk-node`. This
+exists so that an RPC incident can be correlated with the request that triggered it — when a
+provider goes stale, you want to see which of your endpoints served bad data because of it.
+
+```ts
+import { sentinelExpress } from "@sentinel/sdk-node";
+
+app.use(sentinelExpress({
+  projectId: "my-project",
+  apiKey: process.env.SENTINEL_API_KEY!,
+  endpoint: "https://sentinel.internal",
+  serviceName: "payments-api"
+}));
+```
+
+This is a supporting feature, not the product. If you want general-purpose APM, use Sentry,
+Datadog, or OpenTelemetry — they are better at it and always will be.
+
+## Operations
+
+- Self-hosted. Your RPC telemetry never leaves your infrastructure.
+- Multi-tenant: organizations, projects, project-scoped API keys, server-enforced roles.
+- Sensitive fields, headers, private keys, and mnemonics redacted by default.
+- OpenTelemetry spans throughout; exporters left to the deployer.
+- `GET /health`, `GET /ready`, `GET /metrics` for orchestration.
+- Alert rules with webhook destinations and delivery records.
+
+Full endpoint list and auth model in [ARCHITECTURE.md](ARCHITECTURE.md).
+
 ## Verification
 
 ```bash
-npm run typecheck
-npm test
-npm run lint
-npm run build
+npm run typecheck && npm test && npm run lint && npm run build
 ```
-
-## Architecture
-
-See [ARCHITECTURE.md](ARCHITECTURE.md) for the full system design: data flow diagrams, the worker's
-processing pipeline, the data model, and the authentication/authorization trust boundaries.
 
 ## Roadmap
 
-See [docs/roadmap.md](docs/roadmap.md).
+See [docs/roadmap.md](docs/roadmap.md). Phase 1 is result capture and the first content-aware
+detectors; Phase 2 is cross-provider verification; Phase 3 publishes a public measurement study of
+RPC provider reliability built with this tool.
 
-## Architectural Decisions
+## Architectural decisions
 
 - [ADR-001: Use PostgreSQL For Durable Storage](docs/adr/001-use-postgresql.md)
 - [ADR-002: Use Redis Streams For MVP Queueing](docs/adr/002-use-redis-streams.md)
 - [ADR-003: Keep Ingestion Asynchronous](docs/adr/003-keep-ingestion-asynchronous.md)
 - [ADR-004: Redact Sensitive Data By Default](docs/adr/004-redact-sensitive-data-by-default.md)
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). Good first issues are tagged in the tracker.
 
 ## License
 

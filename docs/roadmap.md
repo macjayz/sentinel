@@ -1,59 +1,136 @@
 # Roadmap
 
-## v0.1 MVP
+Sentinel's goal is to be the tool teams use to answer one question: **is my RPC provider telling me
+the truth?**
 
-- Express SDK
-- Ingestion API
-- Redis Streams queue
-- Worker and threat engine
-- PostgreSQL persistence
-- Dashboard overview
-- Docker Compose self-hosting
-- Health, readiness, and runtime metrics
-- Request explorer with method, status, IP, path, and threat filters
-- Grouped security incidents with affected endpoint, attacker IPs, duration, and request count
-- OpenTelemetry span hooks and trace IDs across the Sentinel pipeline
-- Organization, user, membership, role, and project-scoped API key foundation
-- Dashboard sign-in shell, operator role context, and project switcher
-- API key list, create, and revoke workflows
-- Web3 RPC SDK with EIP-1193 and viem-compatible transport helpers
-- RPC dashboard view with method, provider, chain, latency, and threat context
-- Live local pipeline verification with Postgres, Redis, ingestion, worker persistence, incidents, and dashboard reads
-- Incident status workflows with open, acknowledged, resolved, and ignored states
-- Webhook alert destinations and queued alert delivery records
-- Webhook alert delivery with exponential backoff retries and terminal failure handling
-- Web3 threat rules: RPC method flooding, wallet transaction bursts, provider latency degradation, and elevated provider failure rates
-- Configurable alert rule engine: error rate, p95 latency, threat score, request volume, and authentication failure thresholds that raise incidents through the existing alert delivery pipeline
-- Application error grouping: SDK error capture, worker-side fingerprinting by type/message/endpoint, and a dashboard Errors view with occurrence counts and affected IPs
-- Real dashboard authentication: password-hashed accounts, hashed session tokens, and server-enforced project roles (owner/admin/developer/viewer) on mutating routes
-- Public signup onboarding: organization, project, owner membership, and first SDK key creation
-- Production-safe dashboard scoping: authenticated analytics, authenticated live updates, and no anonymous demo fallback in production
+Everything below is ordered by how much it serves that question. Work that does not serve it is
+explicitly deprioritized, including work that is already built.
 
-## v0.2 Product Hardening
+---
 
-- Project management UI
-- User management UI: invite additional dashboard accounts and assign project roles
-- API key rotation and scoped permissions
-- SDK retry backoff controls
-- Worker dead-letter stream
-- Endpoint trend charts
-- Per-delivery response detail and delivery history drill-down
-- WebSocket event fanout from worker results
-- Configurable web3 threat rule thresholds
-- Error group detail view with sample stack traces and occurrence history
+## Phase 1 — Result capture and the first content-aware detectors
 
-## v0.3 Integrations
+*The unlock. Nothing else on this roadmap is possible without it.*
 
-- Slack and Discord notifications
-- OpenTelemetry export
-- GitHub issue creation for incidents
-- NATS queue adapter
+The SDK currently discards RPC results and synthesizes a `200`/`500` status from whether the call
+threw. Every differentiated detector needs the response body.
 
-## Later
+- [ ] Extend the `evmRpc` event block with `blockTag`, `blockNumber`, `blockHash`, `resultHash`,
+      `resultShape`, `rpcErrorCode`, `endpointHash`, `costUnits`, `shadowOfTraceId`
+      ([spec](detectors.md#prerequisite-result-capture))
+- [ ] Result normalization and hashing — sorted keys, lowercased hex, canonical leading zeros.
+      **This is the load-bearing piece.** Weak normalization makes D2 pure noise
+- [ ] Stop modeling RPC as HTTP. `request.method: "POST"`, `path: "/rpc"`, and reusing
+      `auth.failed` to mean "the RPC call failed" are all modeling debt that will block D1–D6
+- [ ] Endpoint hashing — **never persist an RPC URL**, it embeds the provider API key
+- [ ] Per-chain block-time table (mainnet, Base, Arbitrum, Optimism, Polygon) with a measured-median
+      fallback for unknown chains
+- [ ] **D1 — Stale head** ([spec](detectors.md#d1--stale-head))
+- [ ] **D3 — Silent failure** ([spec](detectors.md#d3--silent-failure))
+- [ ] **D6 — Cost and waste**, including duplicate-call detection within a block
+      ([spec](detectors.md#d6--cost-and-waste))
+- [ ] Dashboard: replace the generic RPC activity view with a provider-health view — head lag, silent
+      failure rate, and cost per method per provider
 
-- Python SDK
-- Go SDK
-- Kubernetes deployment templates
-- Enterprise auth
-- Additional Web3 networks
-- Rule marketplace
+**Done when:** Sentinel can point at a single provider and report staleness, silent failures, and
+wasted spend that no other tool surfaces.
+
+---
+
+## Phase 2 — Cross-provider verification
+
+*The flagship. This is the capability nobody else has.*
+
+- [ ] Multi-endpoint configuration: primary plus one or more verification endpoints per chain
+- [ ] Shadow client with **block pinning** — rewrite `latest` to the concrete resolved height before
+      replaying. Comparing `latest` to `latest` measures head skew, not disagreement, and yields
+      nothing but false positives
+- [ ] Deterministic-method allowlist. Never shadow `eth_gasPrice`, `eth_estimateGas`, or anything
+      `pending`-tagged
+- [ ] Sampling budget with a hard `maxShadowCallsPerMinute` ceiling, defaulted low. Verification must
+      never become the dominant cost
+- [ ] **D2 — Cross-provider disagreement** ([spec](detectors.md#d2--cross-provider-disagreement))
+- [ ] **D4 — Reorg lag**, including per-provider convergence time
+      ([spec](detectors.md#d4--reorg-lag))
+- [ ] **D5 — Throttling as success** ([spec](detectors.md#d5--throttling-as-success))
+- [ ] Disagreement incident view: the two results, the pinned height, both endpoints, the diff
+- [ ] Normalization test corpus built from real recorded responses across at least three providers
+
+**Done when:** Sentinel can catch two providers disagreeing at the same block height and show the
+diff.
+
+---
+
+## Phase 3 — The measurement study
+
+*The distribution strategy. Publishing novel data outperforms publishing code.*
+
+Run Phase 2 against the major public RPC providers for 30 days and publish the results, with the
+harness open sourced so anyone can reproduce it.
+
+- [ ] Continuous measurement harness across the major providers on mainnet and two L2s
+- [ ] 30-day collection: head lag distribution, silent failure rate, disagreement incidents,
+      reorg convergence lag, throttling behavior under sustained load
+- [ ] Public methodology write-up — reproducible, with the raw dataset published
+- [ ] Comparison table with confidence intervals, not marketing claims
+- [ ] Reproduction instructions so anyone can run it against their own providers
+
+**Done when:** there is a citable public dataset on EVM RPC provider reliability that did not exist
+before, and Sentinel is the tool that produced it.
+
+**Rules for this phase:** report what the data says, including when it is unflattering to a
+narrative that would be better for the project. Contact providers with findings before publishing.
+Credibility here is the entire point, and it is spent instantly by overclaiming.
+
+---
+
+## Phase 4 — Adoption
+
+- [ ] Publish `@sentinel/web3` to npm with real semver and a changelog
+- [ ] Hosted docs with a five-minute quickstart
+- [ ] Framework adapters: ethers.js, web3.js, plain `fetch`
+- [ ] Standalone mode — run the detectors without the full self-hosted stack
+- [ ] Additional chains: Solana JSON-RPC, Cosmos
+- [ ] Slack and Discord incident notifications
+- [ ] OpenTelemetry export
+- [ ] Grafana dashboard templates
+
+---
+
+## Deprioritized
+
+Already built and maintained, but no longer where the project's effort goes. These stay because they
+support the RPC story — correlating a provider incident with the request that triggered it — not
+because Sentinel competes on general observability.
+
+- Express, REST, and GraphQL request monitoring
+- Application error grouping
+- Generic per-IP rate anomaly and credential-stuffing heuristics
+- Project and user management UI
+- API key rotation UI
+
+Sentry, Datadog, and OpenTelemetry are better at general APM and always will be. Sentinel does not
+try to win there.
+
+---
+
+## Shipped
+
+**v0.1 — self-hosted pipeline.** Express SDK; ingestion API; Redis Streams queue; worker and threat
+engine; PostgreSQL persistence; dashboard with request explorer and incident grouping; Docker
+Compose self-hosting; health, readiness, and Prometheus metrics; OpenTelemetry spans and trace IDs
+across the pipeline.
+
+**v0.1 — multi-tenancy and auth.** Organizations, users, memberships, project-scoped API keys;
+password-hashed accounts with hashed session tokens; server-enforced `owner`/`admin`/`developer`/
+`viewer` roles on mutating routes; public signup onboarding; production-safe dashboard scoping with
+no anonymous fallback.
+
+**v0.1 — alerting.** Incident status workflows (open, acknowledged, resolved, ignored); webhook
+destinations with exponential-backoff retries and terminal failure handling; configurable alert rule
+engine over error rate, p95 latency, threat score, request volume, and auth failures.
+
+**v0.1 — web3 foundation.** `@sentinel/web3` with EIP-1193 wrapper, viem-compatible transport, and
+standalone JSON-RPC client; per-call recording of method, chain, provider, latency, and hard
+failures; web3 threat rules for RPC method flooding, wallet transaction bursts, provider latency
+degradation, and elevated provider failure rates.
