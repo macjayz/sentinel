@@ -1,0 +1,34 @@
+{
+  "method": "eth_getBalance",
+  "params": [
+    "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
+    "0x18bd0b7"
+  ],
+  "responses": {
+    "publicnode": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": "0x1b28aaf471a59f2a2ee12"
+    },
+    "drpc": {
+      "id": 1,
+      "jsonrpc": "2.0",
+      "result": "0x1b28aaf471a59f2a2ee12"
+    },
+    "blastapi": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": "0x1b28aaf471a59f2a2ee12"
+    },
+    "onfinality": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": "0x1b28aaf471a59f2a2ee12"
+    },
+    "mevblocker": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": "0x1b28aaf471a59f2a2ee12"
+    }
+  }
+}

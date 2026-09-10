@@ -2,7 +2,7 @@
   "name": "sentinel-platform",
   "version": "0.1.0",
   "private": true,
-  "description": "Self-hosted EVM RPC reliability monitoring — catches the JSON-RPC failures that return 200 OK.",
+  "description": "Self-hosted EVM RPC reliability monitoring \u2014 catches the JSON-RPC failures that return 200 OK.",
   "type": "module",
   "scripts": {
     "build": "npm run build -w packages/shared && npm run build -w packages/sdk-node && npm run build -w packages/web3 && npm run build --workspaces --if-present",
@@ -11,7 +11,8 @@
     "lint": "eslint .",
     "test": "npm run test --workspaces --if-present",
     "typecheck": "tsc -b tsconfig.json",
-    "format": "prettier --write ."
+    "format": "prettier --write .",
+    "record:corpus": "tsx scripts/record-normalization-corpus.ts"
   },
   "workspaces": [
     "apps/*",

@@ -1,7 +1,60 @@
 import { context, SpanStatusCode, trace, type AttributeValue } from "@opentelemetry/api";
+import {
+  detectCostWaste,
+  detectDisagreement,
+  detectReorgLag,
+  detectSilentFailure,
+  detectStaleHead,
+  detectThrottling,
+  type CostWasteContext,
+  type DisagreementContext,
+  type ReorgContext,
+  type SilentFailureContext,
+  type StaleHeadContext,
+  type ThrottlingContext
+} from "./detectors.js";
 import { z } from "zod";
 
 export { buildDemoEvents } from "./demoEvents.js";
+export {
+  detectCostWaste,
+  detectDisagreement,
+  detectReorgLag,
+  detectSilentFailure,
+  detectStaleHead,
+  detectThrottling,
+  DEFAULT_DETECTOR_THRESHOLDS,
+  type CostWasteContext,
+  type DetectorThresholds,
+  type DisagreementContext,
+  type PeerResult,
+  type ReorgContext,
+  type SilentFailureContext,
+  type StaleHeadContext,
+  type ThrottlingContext
+} from "./detectors.js";
+export {
+  chainBlockTimeMs,
+  classifyResultShape,
+  extractBlockHash,
+  extractBlockNumber,
+  extractBlockTag,
+  extractRpcError,
+  hashEndpoint,
+  hashRpcResult,
+  methodCostUnits,
+  normalizeRpcResult,
+  pinBlockTag,
+  blockTagParamIndex,
+  isThrottleSignature,
+  isVerifiableMethod,
+  resultCount,
+  VERIFIABLE_METHODS,
+  CHAIN_BLOCK_TIME_MS,
+  DEFAULT_METHOD_COST_UNITS,
+  type BlockTag,
+  type ResultShape
+} from "./rpc.js";
 
 export const HttpMethodSchema = z.enum([
   "GET",
@@ -58,7 +111,25 @@ export const SentinelEventSchema = z.object({
       chainId: z.string().optional(),
       provider: z.string().optional(),
       walletAddress: z.string().optional(),
-      contractAddress: z.string().optional()
+      contractAddress: z.string().optional(),
+      // Result capture. Every field below is optional so events produced by older SDK
+      // versions keep validating; detectors treat a missing field as "not observed"
+      // rather than as a negative observation.
+      blockTag: z.string().optional(),
+      blockNumber: z.string().optional(),
+      blockHash: z.string().optional(),
+      resultHash: z.string().optional(),
+      resultShape: z.enum(["null", "empty_array", "empty_data", "value", "error_in_body"]).optional(),
+      resultCount: z.number().int().nonnegative().optional(),
+      /** Whether the response carried a rate-limiting signature (D5). */
+      throttled: z.boolean().optional(),
+      rpcErrorCode: z.number().int().optional(),
+      rpcErrorMessage: z.string().optional(),
+      // Hash of the endpoint URL. The URL itself must never be stored: it embeds the key.
+      endpointHash: z.string().optional(),
+      costUnits: z.number().nonnegative().optional(),
+      // Links a verification call back to the primary call it shadows (detector D2).
+      shadowOfTraceId: z.string().optional()
     })
     .optional(),
   error: z
@@ -187,6 +258,14 @@ export type Web3ThreatContext = {
   providerRecentP95LatencyMs?: number;
   providerBaselineP95LatencyMs?: number;
   providerRecentFailureRate?: number;
+  // Content-aware detectors (docs/detectors.md). Absent when the event predates result
+  // capture, in which case the detectors simply produce no signals.
+  staleHead?: StaleHeadContext;
+  silentFailure?: SilentFailureContext;
+  costWaste?: CostWasteContext;
+  disagreement?: DisagreementContext;
+  reorg?: ReorgContext;
+  throttling?: ThrottlingContext;
 };
 
 export async function withSpan<T>(
@@ -283,6 +362,15 @@ export function assessThreat(
         reason: "EVM RPC provider is failing an abnormal share of recent requests"
       });
     }
+
+    signals.push(
+      ...detectStaleHead(event, web3Context.staleHead),
+      ...detectSilentFailure(event, web3Context.silentFailure),
+      ...detectCostWaste(event, web3Context.costWaste),
+      ...detectDisagreement(event, web3Context.disagreement),
+      ...detectReorgLag(event, web3Context.reorg),
+      ...detectThrottling(event, web3Context.throttling)
+    );
   }
 
   if (event.kind === "graphql" && String(event.request.body ?? "").length > 10000) {

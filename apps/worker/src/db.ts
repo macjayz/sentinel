@@ -5,7 +5,13 @@ import {
   SentinelEvent,
   ThreatAssessment,
   Web3ThreatContext,
-  withSpan
+  withSpan,
+  type CostWasteContext,
+  type DisagreementContext,
+  type ReorgContext,
+  type SilentFailureContext,
+  type StaleHeadContext,
+  type ThrottlingContext
 } from "@sentinel/shared";
 import { AlertRule } from "./alertRules.js";
 import { WorkerConfig } from "./config.js";
@@ -113,13 +119,392 @@ export async function getProviderRpcStats(pool: pg.Pool, projectId: string, prov
   };
 }
 
+/** The `params` array as the SDK recorded it, used to match a call against earlier identical ones. */
+function rpcParams(event: SentinelEvent): unknown[] | undefined {
+  const body = event.request.body;
+  if (!body || typeof body !== "object") return undefined;
+  const params = (body as { params?: unknown }).params;
+  return Array.isArray(params) ? params : undefined;
+}
+
+/**
+ * Head state for detector D1.
+ *
+ * Only `latest`-tagged observations count: a call pinned to a past block or asking for
+ * finalized state says nothing about how current the provider's head is.
+ */
+export async function getStaleHeadContext(
+  pool: pg.Pool,
+  projectId: string,
+  chainId: string | undefined,
+  endpointHash: string | undefined
+): Promise<StaleHeadContext> {
+  if (!chainId) return {};
+
+  const result = await pool.query(
+    `
+    with observations as (
+      select timestamp, evm_block_number
+      from api_events
+      where project_id = $1 and kind = 'evm_rpc' and evm_chain_id = $2
+        and evm_endpoint_hash is not distinct from $3
+        and evm_block_number is not null
+        and (evm_block_tag is null or evm_block_tag = 'latest')
+        and timestamp > now() - interval '15 minutes'
+    ),
+    head as (
+      select max(evm_block_number) as value from observations
+    )
+    select
+      (select value from head)::bigint as endpoint_head,
+      (select count(*) from observations)::int as observations,
+      -- When the head first reached its current value. Anything after that is time the
+      -- provider spent answering without moving forward.
+      (select min(timestamp) from observations where evm_block_number = (select value from head)) as head_since,
+      (select max(evm_block_number) - min(evm_block_number) from observations)::bigint as block_span,
+      (select extract(epoch from (max(timestamp) - min(timestamp))) from observations) as span_seconds,
+      (
+        select max(evm_block_number)
+        from api_events
+        where project_id = $1 and kind = 'evm_rpc' and evm_chain_id = $2
+          and evm_block_number is not null
+          and (evm_block_tag is null or evm_block_tag = 'latest')
+          and timestamp > now() - interval '5 minutes'
+      )::bigint as chain_head
+    `,
+    [projectId, chainId, endpointHash ?? null]
+  );
+
+  const row = result.rows[0];
+  if (!row) return {};
+
+  const headSince = row.head_since ? new Date(row.head_since).getTime() : undefined;
+  const blockSpan = row.block_span === null ? 0 : Number(row.block_span);
+  const spanSeconds = Number(row.span_seconds ?? 0);
+
+  return {
+    endpointHeadBlockNumber: row.endpoint_head === null ? undefined : Number(row.endpoint_head),
+    endpointHeadObservations: row.observations ?? 0,
+    endpointHeadStalledMs: headSince === undefined ? undefined : Date.now() - headSince,
+    chainHeadBlockNumber: row.chain_head === null ? undefined : Number(row.chain_head),
+    // Mean interval across the window, used only for chains absent from the static table.
+    measuredBlockTimeMs: blockSpan > 0 && spanSeconds > 0 ? (spanSeconds * 1000) / blockSpan : undefined
+  };
+}
+
+/**
+ * Comparative history for detector D3.
+ *
+ * Each lookup answers "did this same endpoint previously answer this same question
+ * differently?", because an empty or null result on its own is usually correct.
+ */
+export async function getSilentFailureContext(
+  pool: pg.Pool,
+  projectId: string,
+  event: SentinelEvent
+): Promise<SilentFailureContext> {
+  const evmRpc = event.evmRpc;
+  if (!evmRpc) return {};
+
+  const endpointHash = evmRpc.endpointHash ?? null;
+  const params = rpcParams(event);
+  const context: SilentFailureContext = {};
+
+  if (evmRpc.resultShape === "null" && typeof params?.[0] === "string") {
+    const result = await pool.query(
+      `
+      select exists (
+        select 1 from api_events
+        where project_id = $1 and kind = 'evm_rpc' and evm_rpc_method = $2
+          and evm_endpoint_hash is not distinct from $3
+          and request_body -> 'params' ->> 0 = $4
+          and evm_result_shape is not null and evm_result_shape <> 'null'
+          and timestamp > now() - interval '24 hours'
+      ) as prior
+      `,
+      [projectId, evmRpc.method, endpointHash, params[0]]
+    );
+    context.priorNonNullForSameTarget = Boolean(result.rows[0]?.prior);
+  }
+
+  if (evmRpc.resultShape === "empty_data" && params?.[0] !== undefined) {
+    // Compare only params[0] — the call itself. params[1] is the block tag, which is
+    // expected to differ between the earlier successful call and this one.
+    const result = await pool.query(
+      `
+      select exists (
+        select 1 from api_events
+        where project_id = $1 and kind = 'evm_rpc' and evm_rpc_method = $2
+          and evm_endpoint_hash is not distinct from $3
+          and request_body -> 'params' -> 0 = $4::jsonb
+          and evm_result_shape = 'value'
+          and (evm_block_number is null or $5::bigint is null or evm_block_number < $5::bigint)
+          and timestamp > now() - interval '24 hours'
+      ) as prior
+      `,
+      [projectId, evmRpc.method, endpointHash, JSON.stringify(params[0]), evmRpc.blockNumber ?? null]
+    );
+    context.priorDataForSameCall = Boolean(result.rows[0]?.prior);
+  }
+
+  if (evmRpc.resultCount !== undefined) {
+    const result = await pool.query(
+      `
+      select evm_result_count as max_count, count(*)::int as hits
+      from api_events
+      where project_id = $1 and kind = 'evm_rpc' and evm_rpc_method = $2
+        and evm_endpoint_hash is not distinct from $3
+        and evm_result_count is not null
+        and timestamp > now() - interval '24 hours'
+      group by evm_result_count
+      order by evm_result_count desc
+      limit 1
+      `,
+      [projectId, evmRpc.method, endpointHash]
+    );
+    const row = result.rows[0];
+    if (row) {
+      context.endpointMaxResultCount = Number(row.max_count);
+      context.endpointMaxResultCountHits = row.hits ?? 0;
+    }
+  }
+
+  return context;
+}
+
+/**
+ * Duplicate-call accounting for detector D6.
+ *
+ * Scoped strictly to one block height: two identical calls either side of a block
+ * boundary are legitimate polling, not waste.
+ */
+export async function getCostWasteContext(
+  pool: pg.Pool,
+  projectId: string,
+  event: SentinelEvent
+): Promise<CostWasteContext> {
+  const evmRpc = event.evmRpc;
+  if (!evmRpc?.blockNumber) return {};
+
+  const params = rpcParams(event);
+  if (!params) return {};
+
+  const result = await pool.query(
+    `
+    select count(*)::int as duplicates, coalesce(sum(evm_cost_units), 0)::int as cost_units
+    from api_events
+    where project_id = $1 and kind = 'evm_rpc' and evm_rpc_method = $2
+      and evm_block_number = $3::bigint
+      and request_body -> 'params' = $4::jsonb
+      and timestamp > now() - interval '1 hour'
+    `,
+    [projectId, evmRpc.method, evmRpc.blockNumber, JSON.stringify(params)]
+  );
+
+  const row = result.rows[0];
+  return {
+    duplicateCallCount: row?.duplicates ?? 0,
+    duplicateCostUnits: row?.cost_units ?? 0
+  };
+}
+
+/**
+ * Sibling verification results for detector D2.
+ *
+ * Only populated for shadow events — observations produced by asking several endpoints the
+ * same block-pinned question. Siblings that could not answer (a null, or a JSON-RPC error)
+ * are counted as missing the block rather than compared: an endpoint that lacks the block
+ * has a stale head, which is D1's finding, not a disagreement.
+ */
+export async function getDisagreementContext(
+  pool: pg.Pool,
+  projectId: string,
+  event: SentinelEvent
+): Promise<DisagreementContext> {
+  const evmRpc = event.evmRpc;
+  if (!evmRpc?.shadowOfTraceId || !evmRpc.blockNumber || !evmRpc.resultHash) return {};
+
+  const result = await pool.query(
+    `
+    select evm_endpoint_hash, evm_provider, evm_result_hash, evm_result_shape
+    from api_events
+    where project_id = $1
+      and evm_shadow_of_trace_id = $2
+      and evm_block_number = $3::bigint
+      and id <> $4
+    `,
+    [projectId, evmRpc.shadowOfTraceId, evmRpc.blockNumber, event.id]
+  );
+
+  const peerResults: NonNullable<DisagreementContext["peerResults"]> = [];
+  let peersMissingBlock = 0;
+
+  for (const row of result.rows) {
+    const comparable = row.evm_result_hash && row.evm_result_shape === "value";
+    if (!comparable) {
+      peersMissingBlock += 1;
+      continue;
+    }
+
+    peerResults.push({
+      endpointHash: row.evm_endpoint_hash ?? undefined,
+      provider: row.evm_provider ?? undefined,
+      resultHash: row.evm_result_hash
+    });
+  }
+
+  return { peerResults, peersMissingBlock };
+}
+
+/**
+ * Chain view for detector D4.
+ *
+ * A hash seen at a height *before* this one arrived means the chain was rewritten under
+ * us. A different hash seen *after* ours, from another endpoint, means the peers have
+ * moved on and this endpoint is still serving a block they abandoned.
+ */
+export async function getReorgContext(
+  pool: pg.Pool,
+  projectId: string,
+  event: SentinelEvent
+): Promise<ReorgContext> {
+  const evmRpc = event.evmRpc;
+  if (!evmRpc?.blockHash || !evmRpc.blockNumber || !evmRpc.chainId) return {};
+
+  const result = await pool.query(
+    `
+    with at_height as (
+      select evm_block_hash, evm_endpoint_hash, min(timestamp) as first_seen
+      from api_events
+      where project_id = $1 and evm_chain_id = $2 and evm_block_number = $3::bigint
+        and evm_block_hash is not null
+        and timestamp > now() - interval '1 hour'
+      group by evm_block_hash, evm_endpoint_hash
+    ),
+    ours as (
+      select min(first_seen) as first_seen from at_height where evm_block_hash = $4
+    )
+    select
+      (
+        select evm_block_hash from at_height
+        where evm_block_hash <> $4
+          and ((select first_seen from ours) is null or first_seen < (select first_seen from ours))
+        order by first_seen desc limit 1
+      ) as prior_hash,
+      (
+        select min(first_seen) from at_height
+        where evm_block_hash <> $4
+          and evm_endpoint_hash is distinct from $5
+          and ((select first_seen from ours) is null or first_seen > (select first_seen from ours))
+      ) as peer_moved_on_at,
+      (
+        select count(*)::int from (
+          select evm_block_number
+          from api_events
+          where project_id = $1 and evm_chain_id = $2
+            and evm_block_number between $3::bigint - 32 and $3::bigint
+            and evm_block_hash is not null
+            and timestamp > now() - interval '1 hour'
+          group by evm_block_number
+          having count(distinct evm_block_hash) > 1
+        ) rewritten
+      ) as reorg_depth
+    `,
+    [projectId, evmRpc.chainId, evmRpc.blockNumber, evmRpc.blockHash, evmRpc.endpointHash ?? null]
+  );
+
+  const row = result.rows[0];
+  if (!row) return {};
+
+  const peerMovedOnAt = row.peer_moved_on_at ? new Date(row.peer_moved_on_at).getTime() : undefined;
+
+  return {
+    priorBlockHashAtHeight: row.prior_hash ?? undefined,
+    reorgDepth: row.reorg_depth ?? 0,
+    supersededByPeer: peerMovedOnAt !== undefined,
+    peerConvergenceLagMs: peerMovedOnAt === undefined ? undefined : Date.now() - peerMovedOnAt
+  };
+}
+
+/**
+ * Throttle and result-quality rates for detector D5.
+ *
+ * Degradation rates are computed only over events that actually carry a result shape, so
+ * traffic recorded before result capture existed cannot dilute the ratio and hide a real
+ * decline in answer quality.
+ */
+export async function getThrottlingContext(
+  pool: pg.Pool,
+  projectId: string,
+  endpointHash: string | undefined
+): Promise<ThrottlingContext> {
+  const result = await pool.query(
+    `
+    select
+      count(*) filter (where timestamp > now() - interval '5 minutes')::int as recent_total,
+      count(*) filter (
+        where timestamp > now() - interval '5 minutes' and evm_throttled
+      )::int as recent_throttled,
+      count(*) filter (
+        where timestamp > now() - interval '5 minutes' and evm_result_shape is not null
+      )::int as recent_shaped,
+      count(*) filter (
+        where timestamp > now() - interval '5 minutes'
+          and evm_result_shape is not null and evm_result_shape <> 'value'
+      )::int as recent_degraded,
+      count(*) filter (
+        where timestamp between now() - interval '24 hours' and now() - interval '5 minutes'
+          and evm_result_shape is not null
+      )::int as baseline_shaped,
+      count(*) filter (
+        where timestamp between now() - interval '24 hours' and now() - interval '5 minutes'
+          and evm_result_shape is not null and evm_result_shape <> 'value'
+      )::int as baseline_degraded
+    from api_events
+    where project_id = $1 and kind = 'evm_rpc'
+      and evm_endpoint_hash is not distinct from $2
+    `,
+    [projectId, endpointHash ?? null]
+  );
+
+  const row = result.rows[0];
+  if (!row) return {};
+
+  const recentTotal = row.recent_total ?? 0;
+  const recentShaped = row.recent_shaped ?? 0;
+  const baselineShaped = row.baseline_shaped ?? 0;
+
+  return {
+    recentRequestCount: recentTotal,
+    recentThrottleRate: recentTotal > 0 ? (row.recent_throttled ?? 0) / recentTotal : 0,
+    recentDegradedResultRate: recentShaped > 0 ? (row.recent_degraded ?? 0) / recentShaped : 0,
+    baselineDegradedResultRate: baselineShaped > 0 ? (row.baseline_degraded ?? 0) / baselineShaped : 0
+  };
+}
+
 export async function getWeb3ThreatContext(pool: pg.Pool, event: SentinelEvent): Promise<Web3ThreatContext> {
   if (event.kind !== "evm_rpc" || !event.evmRpc) return {};
 
-  const [methodCallCount, walletStats, providerStats] = await Promise.all([
+  const [
+    methodCallCount,
+    walletStats,
+    providerStats,
+    staleHead,
+    silentFailure,
+    costWaste,
+    disagreement,
+    reorg,
+    throttling
+  ] = await Promise.all([
     countRecentEvmMethodCalls(pool, event.projectId, event.evmRpc.method, event.request.ip),
     getWalletTransactionStats(pool, event.projectId, event.evmRpc.walletAddress),
-    getProviderRpcStats(pool, event.projectId, event.evmRpc.provider)
+    getProviderRpcStats(pool, event.projectId, event.evmRpc.provider),
+    getStaleHeadContext(pool, event.projectId, event.evmRpc.chainId, event.evmRpc.endpointHash),
+    getSilentFailureContext(pool, event.projectId, event),
+    getCostWasteContext(pool, event.projectId, event),
+    getDisagreementContext(pool, event.projectId, event),
+    getReorgContext(pool, event.projectId, event),
+    getThrottlingContext(pool, event.projectId, event.evmRpc.endpointHash)
   ]);
 
   return {
@@ -128,7 +513,19 @@ export async function getWeb3ThreatContext(pool: pg.Pool, event: SentinelEvent):
     walletBaselineHourlyTxCount: walletStats.baselineHourlyAverage,
     providerRecentP95LatencyMs: providerStats.recentP95LatencyMs,
     providerBaselineP95LatencyMs: providerStats.baselineP95LatencyMs,
-    providerRecentFailureRate: providerStats.recentFailureRate
+    providerRecentFailureRate: providerStats.recentFailureRate,
+    staleHead,
+    silentFailure,
+    costWaste,
+    disagreement,
+    reorg,
+    // Latency comes from the provider stats already gathered above rather than a second
+    // query: D5's soft rule needs the same p95 figures provider_degradation uses.
+    throttling: {
+      ...throttling,
+      recentP95LatencyMs: providerStats.recentP95LatencyMs,
+      baselineP95LatencyMs: providerStats.baselineP95LatencyMs
+    }
   };
 }
 
@@ -151,6 +548,9 @@ export async function persistEvent(pool: pg.Pool, event: SentinelEvent, assessme
       user_agent, request_headers, request_query, request_body, status_code, latency_ms,
       body_bytes, auth_present, auth_failed, graphql_operation_name, graphql_operation_type,
       evm_rpc_method, evm_chain_id, evm_provider, wallet_address, contract_address,
+      evm_block_tag, evm_block_number, evm_block_hash, evm_result_hash, evm_result_shape,
+      evm_rpc_error_code, evm_rpc_error_message, evm_endpoint_hash, evm_cost_units,
+      evm_shadow_of_trace_id, evm_result_count, evm_throttled,
       error_type, error_message, error_stack,
       threat_score, threat_severity, threat_signals
     )
@@ -159,8 +559,11 @@ export async function persistEvent(pool: pg.Pool, event: SentinelEvent, assessme
       $13, $14, $15, $16, $17, $18,
       $19, $20, $21, $22, $23,
       $24, $25, $26, $27, $28,
-      $29, $30, $31,
-      $32, $33, $34
+      $29, $30, $31, $32, $33,
+      $34, $35, $36, $37,
+      $38, $39, $40,
+      $41, $42, $43,
+      $44, $45, $46
     )
     on conflict (id) do nothing
     `,
@@ -193,6 +596,18 @@ export async function persistEvent(pool: pg.Pool, event: SentinelEvent, assessme
           event.evmRpc?.provider,
           event.evmRpc?.walletAddress,
           event.evmRpc?.contractAddress,
+          event.evmRpc?.blockTag,
+          event.evmRpc?.blockNumber,
+          event.evmRpc?.blockHash,
+          event.evmRpc?.resultHash,
+          event.evmRpc?.resultShape,
+          event.evmRpc?.rpcErrorCode,
+          event.evmRpc?.rpcErrorMessage,
+          event.evmRpc?.endpointHash,
+          event.evmRpc?.costUnits,
+          event.evmRpc?.shadowOfTraceId,
+          event.evmRpc?.resultCount,
+          event.evmRpc?.throttled,
           event.error?.type,
           event.error?.message,
           event.error?.stack,

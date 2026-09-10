@@ -1,0 +1,35 @@
+{
+  "method": "eth_getStorageAt",
+  "params": [
+    "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+    "0x0",
+    "0x18bd0b7"
+  ],
+  "responses": {
+    "publicnode": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": "0x000000000000000000000000fcb19e6a322b27c06842a71e8c725399f049ae3a"
+    },
+    "drpc": {
+      "id": 1,
+      "jsonrpc": "2.0",
+      "result": "0x000000000000000000000000fcb19e6a322b27c06842a71e8c725399f049ae3a"
+    },
+    "blastapi": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": "0x000000000000000000000000fcb19e6a322b27c06842a71e8c725399f049ae3a"
+    },
+    "onfinality": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": "0x000000000000000000000000fcb19e6a322b27c06842a71e8c725399f049ae3a"
+    },
+    "mevblocker": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": "0x000000000000000000000000fcb19e6a322b27c06842a71e8c725399f049ae3a"
+    }
+  }
+}

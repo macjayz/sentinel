@@ -26,7 +26,8 @@ Phase 1 extends the `evmRpc` block of `SentinelEvent` with:
 | `blockNumber` | The concrete height the call actually resolved against | Required for any same-height comparison |
 | `blockHash` | Hash at that height, when the response carries one | Reorg tracking |
 | `resultHash` | Normalized hash of the result value | Comparison without storing raw chain data |
-| `resultShape` | `null` \| `empty_array` \| `value` \| `error_in_body` | Cheap silent-failure signal |
+| `resultShape` | `null` \| `empty_array` \| `empty_data` \| `value` \| `error_in_body` | Cheap silent-failure signal |
+| `resultCount` | Number of entries in an array result | Detects silently truncated pages |
 | `rpcErrorCode` | JSON-RPC error code found inside a 200 body | Providers do this more than you would expect |
 | `endpointHash` | Hash of the RPC URL | **Never store the URL — it embeds the API key** |
 | `costUnits` | Provider-weighted cost for this method | Cost accounting |
@@ -45,6 +46,8 @@ must be able to distinguish two endpoints of the same provider without ever pers
 
 ## D1 — Stale head
 
+**Status: implemented.**
+
 **Catches:** a provider serving a chain head that has stopped advancing, or that lags the fastest
 provider you use.
 
@@ -61,8 +64,8 @@ tracked per `endpointHash`.
 **False positives to handle:**
 - Low-traffic projects produce sparse samples. Do not fire on fewer than 3 observations in the window.
 - Chains with irregular block times (or an L2 in a sequencer pause) need a per-chain block-time table,
-  not a global constant. Ship the table for mainnet, Base, Arbitrum, Optimism, Polygon; fall back to
-  measured median block time for unknown chains.
+  not a global constant. The table ships for mainnet, Base, Arbitrum, Optimism, Polygon and Sepolia;
+  unknown chains fall back to the mean block interval measured over the observation window.
 - A deliberately `finalized`-tagged call is *supposed* to lag. Exclude non-`latest` tags.
 
 **Cost:** free. Derived entirely from calls the application already makes.
@@ -70,6 +73,8 @@ tracked per `endpointHash`.
 ---
 
 ## D2 — Cross-provider disagreement
+
+**Status: implemented.** Off unless a `verify` block is configured.
 
 **The flagship detector.** Catches two providers returning different results for the same call at
 the same block height. At equal height, a mismatch is either a provider bug or an unpropagated
@@ -97,18 +102,35 @@ truncation (see D3) and should be classified as such rather than as disagreement
 - **Formatting variance is the main source.** Providers differ on hex leading zeros, `null` vs
   omitted fields, log ordering, and receipt field sets. Normalization must be aggressive and
   well-tested, or D2 is noise. This is the hard engineering in the whole project.
+  Measured against five public endpoints
+  ([corpus](../packages/shared/corpus/README.md)): all five returned semantically identical
+  results for all nine calls, differing only in key order — up to four distinct orderings for a
+  single `eth_getLogs` response. Normalization collapses that to one hash while still separating
+  genuinely different values.
 - One provider not yet having the block — treat "block not found at pinned height" as a D1 stale-head
   observation, not a disagreement.
 - Non-deterministic methods (`eth_gasPrice`, `eth_estimateGas`, anything `pending`) must never be
   shadowed. Enforce with an allowlist, not a denylist.
 
-**Cost:** `shadowSampleRate × secondaryCount` extra calls, on endpoints you configure. Must be
-budgeted with a hard ceiling (`maxShadowCallsPerMinute`) so verification can never become the
-dominant cost. Default the ceiling low and make it explicit in config.
+**What is actually being verified.** When the original call named a concrete height, the
+comparison audits answers to exactly that question. When it used `latest`, the height that
+`latest` resolved to is not recoverable from the response — so verification instead re-probes
+every endpoint, *including the primary*, at a freshly resolved height. That measures whether the
+providers agree rather than auditing one specific response, and it is the only form of the
+comparison that is free of head-skew false positives. The primary is added to the fan-out
+automatically, so every sample yields a set of directly comparable observations.
+
+**Cost:** `sampleRate × (secondaryCount + 1)` extra calls, on endpoints you configure, plus at
+most one `eth_blockNumber` per `headCacheMs` to resolve a pin target. Bounded by a hard
+`maxCallsPerMinute` ceiling (default 60) that is checked before every fan-out, so verification can
+never become the dominant cost. Defaults: `sampleRate` 0.01, verification disabled entirely unless
+endpoints are configured.
 
 ---
 
 ## D3 — Silent failure
+
+**Status: implemented,** except the cross-provider log comparison, which needs D2.
 
 **Catches:** `200 OK` responses that carry no usable answer.
 
@@ -127,14 +149,17 @@ dominant cost. Default the ceiling low and make it explicit in config.
 **False positives to handle:**
 - Empty is often legitimately correct. Every rule above is comparative — it fires on a *change* or a
   *disagreement*, never on emptiness alone. Do not add an "empty result" rule without a comparison.
-- Known provider page limits need a maintained table; when unknown, learn the modal result count per
-  endpoint and treat a hard ceiling as suspicious.
+- Rather than maintaining a table of provider page limits, the implementation treats the largest
+  result count seen from an endpoint as a suspected ceiling only once it has recurred at least three
+  times. A one-off maximum is a coincidence; a repeated exact ceiling is a cap.
 
 **Cost:** free for the in-body checks; the comparative checks ride on D2's samples.
 
 ---
 
 ## D4 — Reorg lag
+
+**Status: implemented.**
 
 **Catches:** providers that keep serving a block after it has been reorged out, and measures how
 deep the reorg went.
@@ -150,8 +175,10 @@ publishes it. A provider that is consistently 2 blocks slow to abandon a reorged
 doomed state to every one of its users, and this detector is the only way to know.
 
 **False positives to handle:**
-- A one-block reorg on mainnet is normal and should be recorded as data, not raised as an incident.
-  Alert on depth ≥ 2, or on convergence lag above a threshold.
+- A one-block reorg on mainnet is normal and is recorded with zero weight. Even at depth ≥ 2 the
+  `reorg_detected` signal is scored below the incident threshold on purpose: a reorg is the chain's
+  behaviour, not the provider's fault. The actionable finding is `reorg_lag` — a provider still
+  serving a block its peers have abandoned — which does raise an incident.
 - Uncle/ommer blocks on some chains will look like reorgs; scope the tracker to canonical-chain
   responses only.
 
@@ -160,6 +187,8 @@ doomed state to every one of its users, and this detector is the only way to kno
 ---
 
 ## D5 — Throttling as success
+
+**Status: implemented.**
 
 **Catches:** rate limiting that does not arrive as a clean `429`.
 
@@ -171,15 +200,24 @@ result-shape signals.
 - A latency cliff (p95 stepping above `3×` baseline) coincides with a rise in empty or truncated
   results — the signature of soft throttling.
 
-**False positives to handle:** a latency cliff alone is already covered by the shipping
-`provider_degradation` signal. D5 should only fire when latency degradation *and* result
-degradation appear together; otherwise defer to the existing signal.
+**False positives to handle:**
+
+- A latency cliff alone is already covered by `provider_degradation`. The soft rule requires
+  latency degradation **and** result degradation together; either on its own produces nothing.
+- The throttle-message pattern is deliberately narrow. A loose one ("exceeded") would match
+  `gas limit exceeded` and turn every reverted call into a throttling finding.
+- Degradation rates are measured only over events that carry a result shape, so traffic recorded
+  before result capture existed cannot dilute the ratio and mask a real decline.
+- Explicit throttling suppresses the inferred finding: when both hold, only `provider_throttling`
+  is reported, since it names the cause directly.
 
 **Cost:** free.
 
 ---
 
 ## D6 — Cost and waste
+
+**Status: implemented** for duplicate-call detection and per-method cost attribution.
 
 **Catches:** compute units burned per method, and money spent on calls that did not need to happen.
 

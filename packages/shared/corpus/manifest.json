@@ -1,0 +1,14 @@
+{
+  "chainId": "1",
+  "blockNumber": "25940151",
+  "blockTag": "0x18bd0b7",
+  "recordedAt": "2026-09-09T13:42:15.260Z",
+  "endpoints": [
+    "publicnode",
+    "drpc",
+    "blastapi",
+    "onfinality",
+    "mevblocker"
+  ],
+  "note": "Raw JSON-RPC bodies as returned by each endpoint. Re-record with scripts/record-normalization-corpus.ts"
+}

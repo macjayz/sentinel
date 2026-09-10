@@ -1,0 +1,34 @@
+{
+  "method": "eth_getTransactionCount",
+  "params": [
+    "0xd8da6bf26964af9d7eed9e03e53415d37aa96045",
+    "0x18bd0b7"
+  ],
+  "responses": {
+    "publicnode": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": "0x1744"
+    },
+    "drpc": {
+      "id": 1,
+      "jsonrpc": "2.0",
+      "result": "0x1744"
+    },
+    "blastapi": {
+      "id": 1,
+      "result": "0x1744",
+      "jsonrpc": "2.0"
+    },
+    "onfinality": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": "0x1744"
+    },
+    "mevblocker": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": "0x1744"
+    }
+  }
+}

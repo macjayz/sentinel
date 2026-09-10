@@ -26,12 +26,12 @@ against each other at the same block height. That is what Sentinel does.
 
 | Detector | What it catches | Status |
 |---|---|---|
-| **Stale head** | Provider serving a chain head that has stopped advancing, or that lags the fastest provider you use | Planned — [D1](docs/detectors.md#d1--stale-head) |
-| **Cross-provider disagreement** | Two providers returning different results for the same call at the *same block height* | Planned — [D2](docs/detectors.md#d2--cross-provider-disagreement) |
-| **Silent failure** | `200 OK` carrying `result: null`, an empty log range, or a JSON-RPC error inside a success body | Planned — [D3](docs/detectors.md#d3--silent-failure) |
-| **Reorg lag** | Providers that keep serving a block after it has been reorged out, and how deep the reorg went | Planned — [D4](docs/detectors.md#d4--reorg-lag) |
-| **Throttling as success** | Rate limiting that arrives as degraded results rather than `429` | Planned — [D5](docs/detectors.md#d5--throttling-as-success) |
-| **Cost and waste** | Compute units burned per method, and duplicate identical calls within the same block | Planned — [D6](docs/detectors.md#d6--cost-and-waste) |
+| **Stale head** | Provider serving a chain head that has stopped advancing, or that lags the fastest provider you use | **Shipping** — [D1](docs/detectors.md#d1--stale-head) |
+| **Cross-provider disagreement** | Two providers returning different results for the same call at the *same block height* | **Shipping** — [D2](docs/detectors.md#d2--cross-provider-disagreement) |
+| **Silent failure** | `200 OK` carrying `result: null`, an empty log range, or a JSON-RPC error inside a success body | **Shipping** — [D3](docs/detectors.md#d3--silent-failure) |
+| **Reorg lag** | Providers that keep serving a block after it has been reorged out, and how deep the reorg went | **Shipping** — [D4](docs/detectors.md#d4--reorg-lag) |
+| **Throttling as success** | Rate limiting that arrives as degraded results rather than `429` | **Shipping** — [D5](docs/detectors.md#d5--throttling-as-success) |
+| **Cost and waste** | Compute units burned per method, and duplicate identical calls within the same block | **Shipping** — [D6](docs/detectors.md#d6--cost-and-waste) |
 | **Provider degradation** | p95 latency regression against the provider's own recent baseline | **Shipping** |
 | **Provider failure rate** | Abnormal share of hard failures from one provider | **Shipping** |
 | **RPC flooding** | One method called far above its normal rate from a single source | **Shipping** |
@@ -46,9 +46,14 @@ Sentinel today is a **working self-hosted pipeline** — SDK, ingestion API, que
 engine, Postgres, dashboard, incidents, alerting — with **per-call RPC observability**: method,
 chain, provider, latency, and hard failures.
 
-The content-aware detectors above (D1–D6) are **not built yet**. They require capturing and
-normalizing RPC *results*, which the current recorder deliberately discards. That work is
-[Phase 1 of the roadmap](docs/roadmap.md) and it is the reason this project exists.
+All six content-aware detectors are built: **D1 stale head**, **D2 cross-provider disagreement**,
+**D3 silent failure**, **D4 reorg lag**, **D5 throttling-as-success** and **D6 cost and waste**.
+What remains is the dashboard view for verification results and the
+[measurement study](docs/roadmap.md#phase-3--the-measurement-study) they exist to produce.
+
+Cross-provider verification is off unless you configure it: it costs real requests against the
+endpoints you name. Enable it with a `verify` block naming your comparison endpoints, a sample
+rate, and a hard per-minute ceiling.
 
 This README describes where Sentinel is going and marks clearly what already runs. Nothing in the
 "Shipping" rows above is aspirational.

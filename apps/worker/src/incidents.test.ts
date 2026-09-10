@@ -109,3 +109,65 @@ describe("incident fingerprinting", () => {
     expect(fingerprint?.key).toBe("demo:provider_failures:alchemy");
   });
 });
+
+describe("verification incidents", () => {
+  const rpcEvent: SentinelEvent = {
+    ...baseEvent,
+    kind: "evm_rpc",
+    evmRpc: {
+      method: "eth_call",
+      chainId: "1",
+      provider: "alchemy",
+      endpointHash: "e1",
+      blockNumber: "1000"
+    }
+  };
+
+  it("titles a cross-provider disagreement by the method it affects", () => {
+    const fingerprint = fingerprintIncident(rpcEvent, {
+      score: 40,
+      severity: "medium",
+      signals: [{ name: "provider_disagreement", weight: 40, reason: "differs from infura" }]
+    });
+
+    expect(fingerprint?.key).toBe("demo:provider_disagreement:eth_call");
+    expect(fingerprint?.title).toContain("Providers disagree on eth_call");
+  });
+
+  it("groups reorg lag per endpoint rather than per call", () => {
+    const fingerprint = fingerprintIncident(rpcEvent, {
+      score: 28,
+      severity: "medium",
+      signals: [{ name: "reorg_lag", weight: 28, reason: "still serving an abandoned block" }]
+    });
+
+    expect(fingerprint?.key).toBe("demo:reorg_lag:e1");
+    expect(fingerprint?.title).toContain("alchemy");
+  });
+
+  it("does not raise an incident for a reorg on its own", () => {
+    // A reorg is the chain's behaviour, not the provider's fault. It is scored and
+    // recorded, but only reorg_lag — a provider still serving an abandoned block —
+    // is actionable enough to page someone.
+    const fingerprint = fingerprintIncident(rpcEvent, {
+      score: 24,
+      severity: "low",
+      signals: [{ name: "reorg_detected", weight: 24, reason: "part of a 3-block reorg" }]
+    });
+
+    expect(fingerprint).toBeNull();
+  });
+
+  it("prefers the disagreement over a generic heuristic on the same event", () => {
+    const fingerprint = fingerprintIncident(rpcEvent, {
+      score: 70,
+      severity: "high",
+      signals: [
+        { name: "rate_anomaly", weight: 30, reason: "high volume" },
+        { name: "provider_disagreement", weight: 40, reason: "differs from infura" }
+      ]
+    });
+
+    expect(fingerprint?.key).toBe("demo:provider_disagreement:eth_call");
+  });
+});

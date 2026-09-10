@@ -15,19 +15,22 @@ explicitly deprioritized, including work that is already built.
 The SDK currently discards RPC results and synthesizes a `200`/`500` status from whether the call
 threw. Every differentiated detector needs the response body.
 
-- [ ] Extend the `evmRpc` event block with `blockTag`, `blockNumber`, `blockHash`, `resultHash`,
+- [x] Extend the `evmRpc` event block with `blockTag`, `blockNumber`, `blockHash`, `resultHash`,
       `resultShape`, `rpcErrorCode`, `endpointHash`, `costUnits`, `shadowOfTraceId`
       ([spec](detectors.md#prerequisite-result-capture))
-- [ ] Result normalization and hashing — sorted keys, lowercased hex, canonical leading zeros.
+- [x] Result normalization and hashing — sorted keys, lowercased hex, canonical leading zeros.
       **This is the load-bearing piece.** Weak normalization makes D2 pure noise
 - [ ] Stop modeling RPC as HTTP. `request.method: "POST"`, `path: "/rpc"`, and reusing
       `auth.failed` to mean "the RPC call failed" are all modeling debt that will block D1–D6
-- [ ] Endpoint hashing — **never persist an RPC URL**, it embeds the provider API key
-- [ ] Per-chain block-time table (mainnet, Base, Arbitrum, Optimism, Polygon) with a measured-median
+- [x] Endpoint hashing — **never persist an RPC URL**, it embeds the provider API key
+- [x] Per-chain block-time table (mainnet, Base, Arbitrum, Optimism, Polygon) with a measured-median
       fallback for unknown chains
-- [ ] **D1 — Stale head** ([spec](detectors.md#d1--stale-head))
-- [ ] **D3 — Silent failure** ([spec](detectors.md#d3--silent-failure))
-- [ ] **D6 — Cost and waste**, including duplicate-call detection within a block
+- [x] SDK captures results: `wrapEip1193Provider` and `createSentinelRpcClient` now record block
+      metadata, result hash, result shape, and JSON-RPC errors returned inside a 200 body
+- [x] Persist captured fields (`002_rpc_result_capture.sql`) with indexes shaped for D1–D6
+- [x] **D1 — Stale head** ([spec](detectors.md#d1--stale-head))
+- [x] **D3 — Silent failure** ([spec](detectors.md#d3--silent-failure))
+- [x] **D6 — Cost and waste**, including duplicate-call detection within a block
       ([spec](detectors.md#d6--cost-and-waste))
 - [ ] Dashboard: replace the generic RPC activity view with a provider-health view — head lag, silent
       failure rate, and cost per method per provider
@@ -41,20 +44,22 @@ wasted spend that no other tool surfaces.
 
 *The flagship. This is the capability nobody else has.*
 
-- [ ] Multi-endpoint configuration: primary plus one or more verification endpoints per chain
-- [ ] Shadow client with **block pinning** — rewrite `latest` to the concrete resolved height before
+- [x] Multi-endpoint configuration: primary plus one or more verification endpoints per chain
+- [x] Shadow client with **block pinning** — rewrite `latest` to the concrete resolved height before
       replaying. Comparing `latest` to `latest` measures head skew, not disagreement, and yields
       nothing but false positives
-- [ ] Deterministic-method allowlist. Never shadow `eth_gasPrice`, `eth_estimateGas`, or anything
+- [x] Deterministic-method allowlist. Never shadow `eth_gasPrice`, `eth_estimateGas`, or anything
       `pending`-tagged
-- [ ] Sampling budget with a hard `maxShadowCallsPerMinute` ceiling, defaulted low. Verification must
+- [x] Sampling budget with a hard `maxShadowCallsPerMinute` ceiling, defaulted low. Verification must
       never become the dominant cost
-- [ ] **D2 — Cross-provider disagreement** ([spec](detectors.md#d2--cross-provider-disagreement))
-- [ ] **D4 — Reorg lag**, including per-provider convergence time
+- [x] **D2 — Cross-provider disagreement** ([spec](detectors.md#d2--cross-provider-disagreement))
+- [x] **D4 — Reorg lag**, including per-provider convergence time
       ([spec](detectors.md#d4--reorg-lag))
-- [ ] **D5 — Throttling as success** ([spec](detectors.md#d5--throttling-as-success))
+- [x] **D5 — Throttling as success** ([spec](detectors.md#d5--throttling-as-success))
 - [ ] Disagreement incident view: the two results, the pinned height, both endpoints, the diff
-- [ ] Normalization test corpus built from real recorded responses across at least three providers
+- [x] Normalization test corpus built from real recorded responses across five public endpoints
+      (`npm run record:corpus`). Confirms normalization collapses real key-order variance; cases the
+      sample did not produce are covered separately by clearly-labelled synthetic mutations
 
 **Done when:** Sentinel can catch two providers disagreeing at the same block height and show the
 diff.
