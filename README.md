@@ -16,11 +16,35 @@ it silently truncated. Or failed over to a backup region that disagrees with the
 a block that got reorged out three seconds later. Every one of those is a `200 OK` with a
 sub-100ms latency, and every one of them puts wrong data in front of your users or your keeper bot.
 
-Nothing in a normal observability stack can see this. Datadog sees a fast HTTP 200. Sentry sees no
-exception. Your provider's status page is green, because from their side nothing errored.
+Status-code and latency monitoring does not catch this: the request was fast and nothing threw.
+Generic synthetic monitors can validate a response body when you write an assertion for a known
+answer, but most chain state has no fixed expected value. Detecting a wrong answer requires RPC-aware
+checks and, for many methods, an independent provider answering the same question at the same block.
 
-The only way to catch it is to check the *content* of RPC responses, and to compare providers
-against each other at the same block height. That is what Sentinel does.
+Sentinel captures those observations from real application traffic, samples deterministic reads,
+pins verification calls to a concrete block height, and compares normalized result hashes without
+storing raw chain state.
+
+## How Sentinel is different
+
+Sentinel is an **independent, self-hosted forensic observability layer**, not another RPC gateway.
+
+- **Provider dashboards** show the traffic, errors, latency, and usage seen by that provider.
+  Sentinel sits on the application side and can compare independent providers.
+- **RPC failover and quorum gateways** route requests, retry failures, or wait for matching answers
+  before returning one. Sentinel observes your existing provider setup without becoming the gateway
+  in the critical path.
+- **Generic APM and synthetic monitoring** can detect transport failures and predefined response
+  assertions. Sentinel understands RPC semantics: block tags, chain heads, reorgs, receipts, log
+  ranges, JSON-RPC errors inside HTTP 200 responses, and method-level compute costs.
+
+The narrow distinction is: **sampled, block-pinned, non-blocking verification correlated with the
+application call that triggered it**. Verification runs out of band, has a hard request budget, and
+cannot fail the application's real RPC request.
+
+Sentinel does not claim to be the first system to compare RPC responses. Its goal is to make
+provider disagreement and silent data-quality failures independently observable, historically
+investigable, and reproducible in infrastructure you control.
 
 ## What Sentinel detects
 
